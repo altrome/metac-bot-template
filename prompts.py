@@ -192,3 +192,5 @@ Please create a comprehensive summary that includes:
 Keep the summary concise but comprehensive (300-500 words). Focus on insights that would be valuable to a professional forecaster reviewing this analysis.
 
 Consolidated Summary:"""
+
+EXA_SUMMARY_PROMPT = """You are tasked with creating a clean, concise summary by combining and cleaning multiple content sources from a web article. This summary will be used by a professional forecaster to make predictions about future events. Focus on factual information, key points, and relevant details that would be valuable for forecasting. If the content is not substantially relevant for forecasting purposes or is mostly noise, return "No relevant content found.\""""
