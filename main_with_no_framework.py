@@ -359,6 +359,15 @@ async def forecast_questions(
 
 ######################## FINAL RUN #########################
 if __name__ == "__main__":
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Run Metaculus forecasting bot')
+    parser.add_argument('--tournament', choices=['ai_competition', 'quarterly_cup', 'minibench', 'all'], 
+                       default='all', help='Which tournament to forecast on')
+    parser.add_argument('--tournament-id', type=int, help='Custom tournament ID to use')
+    args = parser.parse_args()
+    
     if USE_EXAMPLE_QUESTIONS:
         open_question_id_post_id = EXAMPLE_QUESTIONS
         
@@ -371,16 +380,28 @@ if __name__ == "__main__":
             )
         )
     else:
-        # Forecast on both AI Competition and MiniBench tournaments (like main.py)
-        print("Forecasting on AI Competition tournament...")
-        ai_competition_questions = get_open_question_ids_from_tournament(CURRENT_AI_COMPETITION_ID)
+        all_questions = []
         
-        print("Forecasting on MiniBench tournament...")  
-        minibench_questions = get_open_question_ids_from_tournament(CURRENT_MINIBENCH_ID)
+        if args.tournament_id:
+            # Use custom tournament ID
+            print(f"Forecasting on custom tournament ID: {args.tournament_id}")
+            all_questions = get_open_question_ids_from_tournament(args.tournament_id)
+        elif args.tournament == 'ai_competition':
+            print("Forecasting on AI Competition tournament...")
+            all_questions = get_open_question_ids_from_tournament(CURRENT_AI_COMPETITION_ID)
+        elif args.tournament == 'quarterly_cup':
+            print("Forecasting on Quarterly Cup tournament...")
+            all_questions = get_open_question_ids_from_tournament(Q1_2025_QUARTERLY_CUP_ID)
+        elif args.tournament == 'minibench':
+            print("Forecasting on MiniBench tournament...")
+            all_questions = get_open_question_ids_from_tournament(CURRENT_MINIBENCH_ID)
+        else:  # args.tournament == 'all'
+            print("Forecasting on AI Competition and MiniBench tournaments...")
+            ai_competition_questions = get_open_question_ids_from_tournament(CURRENT_AI_COMPETITION_ID)
+            minibench_questions = get_open_question_ids_from_tournament(CURRENT_MINIBENCH_ID)
+            all_questions = ai_competition_questions + minibench_questions
         
-        # Combine questions from both tournaments
-        all_questions = ai_competition_questions + minibench_questions
-        print(f"Total questions from both tournaments: {len(all_questions)}")
+        print(f"Total questions found: {len(all_questions)}")
         
         if all_questions:
             asyncio.run(
@@ -392,4 +413,4 @@ if __name__ == "__main__":
                 )
             )
         else:
-            print("No open questions found in either tournament.")
+            print("No open questions found in the specified tournament(s).")
