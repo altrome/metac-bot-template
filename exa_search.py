@@ -1,6 +1,6 @@
 import re
 from exa_py import Exa
-from prompts import SEARCH_QUERIES_PROMPT
+from prompts import SEARCH_QUERIES_PROMPT, EXA_SUMMARY_PROMPT
 from config import EXA_API_KEY
 
 NUM_SEARCH_QUERIES = 5
@@ -56,7 +56,7 @@ def call_exa_search(query: str, start_published_date: str = "2023-01-01T00:00:00
         category="news",
         type = "auto",
         summary = {
-          "query": "You are tasked with creating a clean, concise summary by combining and cleaning multiple content sources from a web article. This summary will be used by a professional forecaster to make predictions about future events. Focus on factual information, key points, and relevant details that would be valuable for forecasting. If the content is not substantially relevant for forecasting purposes or is mostly noise, return \"No relevant content found.\""
+          "query": EXA_SUMMARY_PROMPT
         }
     )
     return response
