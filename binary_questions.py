@@ -1,7 +1,31 @@
 import re
 import datetime
-from prompts import BINARY_PROMPT_TEMPLATE
+from prompts import BINARY_PROMPT_TEMPLATE, BINARY_META_PROMPT_TEMPLATE
 from llm_calls import call_openAI, create_rationale_summary
+
+
+def is_meta_question(title: str) -> bool:
+    """
+    Detect if this is a meta-question about community predictions.
+    Meta-questions typically ask about community prediction percentages at specific dates.
+    """
+    # Convert to lowercase for case-insensitive matching
+    title_lower = title.lower()
+    
+    # Patterns that indicate meta-questions
+    meta_patterns = [
+        r"community prediction.*(?:higher|lower|greater|less|exceed|above|below|at least).*\d+(?:\.\d+)?%",
+        r"(?:will|does).*community prediction.*\d+(?:\.\d+)?%",
+        r"metaculus.*community prediction.*\d+(?:\.\d+)?%",
+        r"cp.*(?:higher|lower|greater|less|exceed|above|below|at least).*\d+(?:\.\d+)?%",
+    ]
+    
+    # Check if any pattern matches
+    for pattern in meta_patterns:
+        if re.search(pattern, title_lower):
+            return True
+    
+    return False
 
 
 def extract_probability_from_response_as_percentage_not_decimal(
@@ -29,7 +53,19 @@ async def get_binary_gpt_prediction(
 
     summary_report, source_urls = await run_research_func(title)
 
-    content = BINARY_PROMPT_TEMPLATE.format(
+    # Determine which template to use based on question type
+    is_meta = is_meta_question(title)
+    if is_meta:
+        # Use specialized template for meta-questions about community predictions
+        template = BINARY_META_PROMPT_TEMPLATE
+        print(f"🎯 DETECTED META-QUESTION: Using BINARY_META_PROMPT_TEMPLATE")
+        print(f"   Title: {title}")
+    else:
+        # Use standard template for regular binary questions
+        template = BINARY_PROMPT_TEMPLATE
+        print(f"📊 Standard binary question: Using BINARY_PROMPT_TEMPLATE")
+
+    content = template.format(
         title=title,
         today=today,
         background=background,
