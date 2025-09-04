@@ -156,12 +156,14 @@ def generate_continuous_cdf(
     continuous_cdf = linear_interpolation(cdf_xaxis, value_percentiles)
     
     # Ensure CDF is properly monotonic and smooth for Metaculus validation
-    continuous_cdf = ensure_cdf_monotonic(continuous_cdf, question_type, cdf_size)
+    continuous_cdf = ensure_cdf_monotonic(continuous_cdf, question_type, cdf_size, 
+                                        open_upper_bound, open_lower_bound)
     
     return continuous_cdf
 
 
-def ensure_cdf_monotonic(cdf: list[float], question_type: str = "numeric", cdf_length: int = 201) -> list[float]:
+def ensure_cdf_monotonic(cdf: list[float], question_type: str = "numeric", cdf_length: int = 201, 
+                        open_upper_bound: bool = False, open_lower_bound: bool = False) -> list[float]:
     """
     Ensure CDF is monotonic and smooth, fixing validation issues.
     Metaculus CDF validation limits vary by question type and length.
@@ -172,16 +174,33 @@ def ensure_cdf_monotonic(cdf: list[float], question_type: str = "numeric", cdf_l
     # Convert to numpy for easier manipulation
     cdf_array = np.array(cdf)
     
-    # Ensure values are between 0 and 1
-    cdf_array = np.clip(cdf_array, 0.0, 1.0)
+    # Minimum step size required by Metaculus (5e-05 = 0.00005)
+    min_step = 5e-05
     
-    # Make strictly monotonic
+    # Ensure values are between appropriate bounds
+    if open_lower_bound:
+        lower_limit = 0.001  # At least 0.001 for open lower bound
+    else:
+        lower_limit = 0.0
+        
+    if open_upper_bound:
+        upper_limit = 0.999  # At most 0.999 for open upper bound
+    else:
+        upper_limit = 1.0
+    
+    cdf_array = np.clip(cdf_array, lower_limit, upper_limit)
+    
+    # Make strictly monotonic with minimum step size
     for i in range(1, len(cdf_array)):
-        if cdf_array[i] <= cdf_array[i-1]:
-            cdf_array[i] = cdf_array[i-1] + 0.001  # Small increment
+        min_required = cdf_array[i-1] + min_step
+        if cdf_array[i] < min_required:
+            cdf_array[i] = min_required
     
-    # Ensure final value is 1.0
-    cdf_array[-1] = 1.0
+    # Ensure final value respects bounds
+    if open_upper_bound:
+        cdf_array[-1] = min(cdf_array[-1], 0.999)
+    else:
+        cdf_array[-1] = 1.0
     
     # Calculate dynamic max jump based on CDF characteristics
     # For most questions with 201 points, a reasonable max jump is around 1/cdf_length
@@ -201,19 +220,33 @@ def ensure_cdf_monotonic(cdf: list[float], question_type: str = "numeric", cdf_l
             steps_needed = max(2, int(np.ceil(jump / max_jump)))
             step_size = jump / steps_needed
             
+            # Make sure step_size is at least min_step
+            step_size = max(step_size, min_step)
+            
             # Redistribute the jump across multiple points if possible
             end_idx = min(i + steps_needed - 1, len(cdf_array) - 1)
             for j in range(i, end_idx + 1):
                 steps_from_start = j - i + 1
-                cdf_array[j] = cdf_array[i-1] + step_size * steps_from_start
+                new_value = cdf_array[i-1] + step_size * steps_from_start
+                
+                # Respect upper bound
+                if open_upper_bound:
+                    new_value = min(new_value, 0.999)
+                else:
+                    new_value = min(new_value, 1.0)
+                    
+                cdf_array[j] = new_value
     
-    # Final pass to ensure monotonicity wasn't broken
+    # Final pass to ensure monotonicity with minimum steps
     for i in range(1, len(cdf_array)):
-        if cdf_array[i] < cdf_array[i-1]:
-            cdf_array[i] = cdf_array[i-1] + 0.001
+        min_required = cdf_array[i-1] + min_step
+        max_allowed = 0.999 if open_upper_bound else 1.0
+        
+        if cdf_array[i] < min_required:
+            cdf_array[i] = min(min_required, max_allowed)
     
-    # Ensure final value is still 1.0
-    cdf_array[-1] = 1.0
+    # Final bounds check
+    cdf_array = np.clip(cdf_array, lower_limit, upper_limit)
     
     return cdf_array.tolist()
 
