@@ -301,11 +301,11 @@ async def forecast_individual_question(
     print(f"Comment for post {post_id} (question {question_id}):\n{comment}")
 
     if question_type == "numeric" or question_type == "discrete":
-        summary_of_forecast += f"Forecast: {str(forecast)[:200]}...\n"
+        summary_of_forecast += f"Forecast: {str(forecast)[:400]}...\n"
     else:
         summary_of_forecast += f"Forecast: {forecast}\n"
 
-    summary_of_forecast += f"Comment:\n```\n{comment[:200]}...\n```\n\n"
+    summary_of_forecast += f"Comment:\n```\n{comment[:400]}...\n```\n\n"
 
     if submit_prediction == True:
         forecast_payload = create_forecast_payload(forecast, question_type)

@@ -154,7 +154,68 @@ def generate_continuous_cdf(
         return y_values
 
     continuous_cdf = linear_interpolation(cdf_xaxis, value_percentiles)
+    
+    # Ensure CDF is properly monotonic and smooth for Metaculus validation
+    continuous_cdf = ensure_cdf_monotonic(continuous_cdf, question_type, cdf_size)
+    
     return continuous_cdf
+
+
+def ensure_cdf_monotonic(cdf: list[float], question_type: str = "numeric", cdf_length: int = 201) -> list[float]:
+    """
+    Ensure CDF is monotonic and smooth, fixing validation issues.
+    Metaculus CDF validation limits vary by question type and length.
+    """
+    if not cdf:
+        return cdf
+    
+    # Convert to numpy for easier manipulation
+    cdf_array = np.array(cdf)
+    
+    # Ensure values are between 0 and 1
+    cdf_array = np.clip(cdf_array, 0.0, 1.0)
+    
+    # Make strictly monotonic
+    for i in range(1, len(cdf_array)):
+        if cdf_array[i] <= cdf_array[i-1]:
+            cdf_array[i] = cdf_array[i-1] + 0.001  # Small increment
+    
+    # Ensure final value is 1.0
+    cdf_array[-1] = 1.0
+    
+    # Calculate dynamic max jump based on CDF characteristics
+    # For most questions with 201 points, a reasonable max jump is around 1/cdf_length
+    # But we need to be more conservative to avoid validation errors
+    if question_type == "discrete":
+        # Discrete questions may have tighter constraints
+        max_jump = min(0.5, 0.95 / cdf_length)
+    else:
+        # Numeric questions typically allow larger jumps
+        max_jump = min(0.58, 1.5 / cdf_length)  # Use 0.58 to stay under 0.59 limit
+    
+    # Apply smoothing for jumps that are too large
+    for i in range(1, len(cdf_array)):
+        jump = cdf_array[i] - cdf_array[i-1]
+        if jump > max_jump:
+            # Calculate how many steps we need to distribute this jump
+            steps_needed = max(2, int(np.ceil(jump / max_jump)))
+            step_size = jump / steps_needed
+            
+            # Redistribute the jump across multiple points if possible
+            end_idx = min(i + steps_needed - 1, len(cdf_array) - 1)
+            for j in range(i, end_idx + 1):
+                steps_from_start = j - i + 1
+                cdf_array[j] = cdf_array[i-1] + step_size * steps_from_start
+    
+    # Final pass to ensure monotonicity wasn't broken
+    for i in range(1, len(cdf_array)):
+        if cdf_array[i] < cdf_array[i-1]:
+            cdf_array[i] = cdf_array[i-1] + 0.001
+    
+    # Ensure final value is still 1.0
+    cdf_array[-1] = 1.0
+    
+    return cdf_array.tolist()
 
 
 async def get_numeric_gpt_prediction(
@@ -179,6 +240,7 @@ async def get_numeric_gpt_prediction(
         cdf_size = outcome_count + 1
     else:
         cdf_size = 201
+    
 
     # Create messages about the bounds that are passed in the LLM prompt
     if open_upper_bound:
