@@ -3,6 +3,7 @@ import datetime
 import numpy as np
 from prompts import NUMERIC_PROMPT_TEMPLATE
 from llm_calls import call_openAI, create_rationale_summary
+from numeric_cdf_constrains import enforce_cdf_constraints, pdf_sparkline_from_cdf, cdf_diagnostics, ascii_plot_cdf
 
 
 def extract_percentiles_from_response(forecast_text: str) -> dict:
@@ -154,101 +155,16 @@ def generate_continuous_cdf(
         return y_values
 
     continuous_cdf = linear_interpolation(cdf_xaxis, value_percentiles)
-    
-    # Ensure CDF is properly monotonic and smooth for Metaculus validation
-    continuous_cdf = ensure_cdf_monotonic(continuous_cdf, question_type, cdf_size, 
-                                        open_upper_bound, open_lower_bound)
-    
+
+    # Ensure CDF follows metaculus constraints
+    continuous_cdf = enforce_cdf_constraints(continuous_cdf, open_lower_bound, open_upper_bound)
+
+    # Console: shape of the PDF (sparkline) and ASCII mini-plot of the CDF
+    print("pdf sparkline:", pdf_sparkline_from_cdf(continuous_cdf))
+    cdf_diagnostics(continuous_cdf)
+    ascii_plot_cdf(continuous_cdf, width=80, height=16, y_ticks=(0.0, 0.25, 0.5, 0.75, 1.0))
+
     return continuous_cdf
-
-
-def ensure_cdf_monotonic(cdf: list[float], question_type: str = "numeric", cdf_length: int = 201, 
-                        open_upper_bound: bool = False, open_lower_bound: bool = False) -> list[float]:
-    """
-    Ensure CDF is monotonic and smooth, fixing validation issues.
-    Metaculus CDF validation limits vary by question type and length.
-    """
-    if not cdf:
-        return cdf
-    
-    # Convert to numpy for easier manipulation
-    cdf_array = np.array(cdf)
-    
-    # Minimum step size required by Metaculus (5e-05 = 0.00005)
-    min_step = 5e-05
-    
-    # Ensure values are between appropriate bounds
-    if open_lower_bound:
-        lower_limit = 0.001  # At least 0.001 for open lower bound
-    else:
-        lower_limit = 0.0
-        
-    if open_upper_bound:
-        upper_limit = 0.999  # At most 0.999 for open upper bound
-    else:
-        upper_limit = 1.0
-    
-    cdf_array = np.clip(cdf_array, lower_limit, upper_limit)
-    
-    # Make strictly monotonic with minimum step size
-    for i in range(1, len(cdf_array)):
-        min_required = cdf_array[i-1] + min_step
-        if cdf_array[i] < min_required:
-            cdf_array[i] = min_required
-    
-    # Ensure final value respects bounds
-    if open_upper_bound:
-        cdf_array[-1] = min(cdf_array[-1], 0.999)
-    else:
-        cdf_array[-1] = 1.0
-    
-    # Calculate dynamic max jump based on CDF characteristics
-    # For most questions with 201 points, a reasonable max jump is around 1/cdf_length
-    # But we need to be more conservative to avoid validation errors
-    if question_type == "discrete":
-        # Discrete questions may have tighter constraints
-        max_jump = min(0.5, 0.95 / cdf_length)
-    else:
-        # Numeric questions typically allow larger jumps
-        max_jump = min(0.58, 1.5 / cdf_length)  # Use 0.58 to stay under 0.59 limit
-    
-    # Apply smoothing for jumps that are too large
-    for i in range(1, len(cdf_array)):
-        jump = cdf_array[i] - cdf_array[i-1]
-        if jump > max_jump:
-            # Calculate how many steps we need to distribute this jump
-            steps_needed = max(2, int(np.ceil(jump / max_jump)))
-            step_size = jump / steps_needed
-            
-            # Make sure step_size is at least min_step
-            step_size = max(step_size, min_step)
-            
-            # Redistribute the jump across multiple points if possible
-            end_idx = min(i + steps_needed - 1, len(cdf_array) - 1)
-            for j in range(i, end_idx + 1):
-                steps_from_start = j - i + 1
-                new_value = cdf_array[i-1] + step_size * steps_from_start
-                
-                # Respect upper bound
-                if open_upper_bound:
-                    new_value = min(new_value, 0.999)
-                else:
-                    new_value = min(new_value, 1.0)
-                    
-                cdf_array[j] = new_value
-    
-    # Final pass to ensure monotonicity with minimum steps
-    for i in range(1, len(cdf_array)):
-        min_required = cdf_array[i-1] + min_step
-        max_allowed = 0.999 if open_upper_bound else 1.0
-        
-        if cdf_array[i] < min_required:
-            cdf_array[i] = min(min_required, max_allowed)
-    
-    # Final bounds check
-    cdf_array = np.clip(cdf_array, lower_limit, upper_limit)
-    
-    return cdf_array.tolist()
 
 
 async def get_numeric_gpt_prediction(
