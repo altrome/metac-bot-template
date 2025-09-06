@@ -3,8 +3,13 @@ import datetime
 from prompts import BINARY_PROMPT_TEMPLATE, BINARY_META_PROMPT_TEMPLATE
 from llm_calls import call_openAI, create_rationale_summary
 
-NBSPS = ("\u00A0", "\u202F", "\u2009", "\u2007")  # NBSP, NNBSP, thin, fig
+# Non-breaking / narrow spaces that sometimes appear before the '%' sign
+NBSPS = ("\u00A0", "\u202F", "\u2009", "\u2007")
+
+# Regex to locate the exact line that starts with "Probability:"
 PROB_LINE = re.compile(r'(?mi)^\s*Probability\s*:.*$')
+
+# Regex to extract a numeric value on that line; accepts optional '%' and decimals
 PROB_VALUE = re.compile(r'Probability\s*:\s*([0-9]+(?:[.,][0-9]+)?)\s*%?', re.I)
 
 
@@ -45,28 +50,47 @@ def extract_probability_from_response_as_percentage_not_decimal(
         raise ValueError(f"Could not extract prediction from response: {forecast_text}")
 
 
-def extract_probability_percent(text: str):
-    # 1) Normaliza espacios raros a espacio ASCII
+def extract_probability_percent(text: str, clamp_min=1.0, clamp_max=99.0, decimals=2):
+    """
+    Extract a probability percentage from the 'Probability:' line and return a value in [1, 99].
+    Robust to:
+      - Optional '%' symbol (e.g., "93", "93%", "93.0 %", "93,0 %")
+      - Unicode spacing before '%'
+      - Decimal commas (e.g., '93,00')
+      - Fractions in [0..1] when '%' is omitted (e.g., '0.93' -> 93%)
+
+    Returns (value_in_percent, status), where status is 'ok' or a failure reason.
+    """
+
+    # 1) Normalize any exotic unicode spaces to plain ASCII spaces
     for sp in NBSPS:
         text = text.replace(sp, " ")
-    # 2) Coge SÓLO la línea con "Probability:"
+
+    # 2) Restrict parsing to the specific line that contains "Probability:"
     mline = PROB_LINE.search(text)
     if not mline:
         return None, "no-prob-line"
     line = mline.group(0)
-    # 3) Local fix en esa línea: coma decimal -> punto
+
+    # 3) Convert decimal comma to dot on that line (e.g., "93,0" -> "93.0")
     line_norm = re.sub(r'(\d),(\d)', r'\1.\2', line)
-    # 4) Extrae número (acepta con o sin % final)
+
+    # 4) Extract the numeric portion; '%' is optional
     m = PROB_VALUE.search(line_norm)
     if not m:
         return None, "no-number"
     val = float(m.group(1))
     had_percent = "%" in line_norm
-    # 5) Unidades: si NO hay % y val<=1.5, asume fracción [0..1] -> pásala a %
+
+    # 5) Units: if there's no '%' and the number looks like a fraction, interpret as [0..1] and convert to %
     if (not had_percent) and val <= 1.5:
         val *= 100.0
-    # 6) Clamp 0..100 y devuelve
-    val = max(0.0, min(100.0, val))
+
+    # 6) Final clamp and optional rounding
+    val = max(clamp_min, min(clamp_max, val))
+    if decimals is not None:
+        val = round(val, decimals)
+
     return val, "ok"
 
 
