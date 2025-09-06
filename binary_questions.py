@@ -3,6 +3,10 @@ import datetime
 from prompts import BINARY_PROMPT_TEMPLATE, BINARY_META_PROMPT_TEMPLATE
 from llm_calls import call_openAI, create_rationale_summary
 
+NBSPS = ("\u00A0", "\u202F", "\u2009", "\u2007")  # NBSP, NNBSP, thin, fig
+PROB_LINE = re.compile(r'(?mi)^\s*Probability\s*:.*$')
+PROB_VALUE = re.compile(r'Probability\s*:\s*([0-9]+(?:[.,][0-9]+)?)\s*%?', re.I)
+
 
 def is_meta_question(title: str) -> bool:
     """
@@ -41,6 +45,31 @@ def extract_probability_from_response_as_percentage_not_decimal(
         raise ValueError(f"Could not extract prediction from response: {forecast_text}")
 
 
+def extract_probability_percent(text: str):
+    # 1) Normaliza espacios raros a espacio ASCII
+    for sp in NBSPS:
+        text = text.replace(sp, " ")
+    # 2) Coge SÓLO la línea con "Probability:"
+    mline = PROB_LINE.search(text)
+    if not mline:
+        return None, "no-prob-line"
+    line = mline.group(0)
+    # 3) Local fix en esa línea: coma decimal -> punto
+    line_norm = re.sub(r'(\d),(\d)', r'\1.\2', line)
+    # 4) Extrae número (acepta con o sin % final)
+    m = PROB_VALUE.search(line_norm)
+    if not m:
+        return None, "no-number"
+    val = float(m.group(1))
+    had_percent = "%" in line_norm
+    # 5) Unidades: si NO hay % y val<=1.5, asume fracción [0..1] -> pásala a %
+    if (not had_percent) and val <= 1.5:
+        val *= 100.0
+    # 6) Clamp 0..100 y devuelve
+    val = max(0.0, min(100.0, val))
+    return val, "ok"
+
+
 async def get_binary_gpt_prediction(
     question_details: dict, num_runs: int, run_research_func
 ) -> tuple[float, str]:
@@ -77,9 +106,7 @@ async def get_binary_gpt_prediction(
     async def get_rationale_and_probability(content: str) -> tuple[float, str]:
         rationale = await call_openAI(content)
 
-        probability = extract_probability_from_response_as_percentage_not_decimal(
-            rationale
-        )
+        probability = extract_probability_percent(rationale)[0]
         comment = (
             f"Extracted Probability: {probability}%\n\nGPT's Answer: "
             f"{rationale}\n\n\n"
