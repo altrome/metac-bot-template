@@ -28,17 +28,30 @@ AXC_2025_TOURNAMENT_ID = 32564
 GIVEWELL_ID = 3600
 RESPIRATORY_OUTLOOK_ID = 3411
 FALL_2025_AI_BENCHMARKING_ID = 32813
+SPRING_2026_AI_BENCHMARKING_ID = 32916
 
 # Current tournament IDs (these should match the ones used in main.py)
-CURRENT_AI_COMPETITION_ID = FALL_2025_AI_BENCHMARKING_ID  # Main AI competition
+CURRENT_AI_COMPETITION_ID = SPRING_2026_AI_BENCHMARKING_ID  # Main AI competition
 CURRENT_MINIBENCH_ID = "minibench"  # MiniBench tournament (The project ID for the currently active minibench is always "minibench")
 
 # The example questions can be used for testing your bot. (note that question and post id are not always the same)
 EXAMPLE_QUESTIONS = [  # (question_id, post_id)
-    (578, 578),  # Human Extinction - Binary - https://www.metaculus.com/questions/578/human-extinction-by-2100/
-    # (14333, 14333),  # Age of Oldest Human - Numeric - https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/
-    # (22427, 22427),  # Number of New Leading AI Labs - Multiple Choice - https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/
-    # (38195, 38880), # Number of US Labor Strikes Due to AI in 2029 - Discrete - https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/
+    (
+        578,
+        578,
+    ),  # Human Extinction - Binary - https://www.metaculus.com/questions/578/human-extinction-by-2100/
+    (
+        14333,
+        14333,
+    ),  # Age of Oldest Human - Numeric - https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/
+    (
+        22427,
+        22427,
+    ),  # Number of New Leading AI Labs - Multiple Choice - https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/
+    (
+        38195,
+        38880,
+    ),  # Number of US Labor Strikes Due to AI in 2029 - Discrete - https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/
 ]
 
 # Also, we realize the below code could probably be cleaned up a bit in a few places
@@ -193,7 +206,7 @@ def get_post_details(post_id: int) -> dict:
 
 
 
-async def run_research(question: str) -> tuple[str, list[str]]:
+async def run_research(question: str | dict) -> tuple[str, list[str]]:
     """
     Run research and return both the research text and list of source URLs.
     Returns (research_text, source_urls)
@@ -201,9 +214,11 @@ async def run_research(question: str) -> tuple[str, list[str]]:
     research = ""
     source_urls = []
     
+    question_text = question.get("title", "") if isinstance(question, dict) else question
+
     # Check for AskNews credentials
     if ASKNEWS_CLIENT_ID and ASKNEWS_SECRET:
-        research = call_asknews(question)
+        research = call_asknews(question_text)
         # Extract URLs from AskNews research (they're in markdown format)
         import re
         urls = re.findall(r'\[(.*?)\]\((https?://[^\)]+)\)', research)
@@ -218,7 +233,7 @@ async def run_research(question: str) -> tuple[str, list[str]]:
         source_urls = list(set(urls))  # Remove duplicates
     # Check for Perplexity API key
     elif PERPLEXITY_API_KEY:
-        research = call_perplexity(question)
+        research = call_perplexity(question_text)
         # Perplexity doesn't provide direct URLs in the response
         source_urls = ["Perplexity AI (sources embedded in response)"]
     else:

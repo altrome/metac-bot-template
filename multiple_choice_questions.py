@@ -1,7 +1,7 @@
 import re
 import datetime
-from prompts import MULTIPLE_CHOICE_PROMPT_TEMPLATE
-from llm_calls import call_openAI, create_rationale_summary
+from prompts_gpt5 import MULTIPLE_CHOICE_PROMPT_TEMPLATE
+from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
 
 
 def extract_option_probabilities_from_response(forecast_text: str, options) -> float:
@@ -94,7 +94,7 @@ async def get_multiple_choice_gpt_prediction(
     fine_print = question_details["fine_print"]
     options = question_details["options"]
 
-    summary_report, source_urls = await run_research_func(title)
+    summary_report, source_urls = await run_research_func(question_details)
 
     content = MULTIPLE_CHOICE_PROMPT_TEMPLATE.format(
         title=title,
@@ -109,7 +109,7 @@ async def get_multiple_choice_gpt_prediction(
     async def ask_llm_for_multiple_choice_probabilities(
         content: str,
     ) -> tuple[dict[str, float], str]:
-        rationale = await call_openAI(content)
+        rationale = await call_gpt5_reasoning_text(content, reasoning_effort="medium", verbosity="medium")
 
         option_probabilities = extract_option_probabilities_from_response(
             rationale, options

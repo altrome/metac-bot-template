@@ -1,8 +1,8 @@
 import re
 import datetime
 import numpy as np
-from prompts import NUMERIC_PROMPT_TEMPLATE
-from llm_calls import call_openAI, create_rationale_summary
+from prompts_gpt5 import NUMERIC_PROMPT_TEMPLATE
+from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
 from numeric_cdf_constrains import enforce_cdf_constraints, pdf_sparkline_from_cdf, cdf_diagnostics, ascii_plot_cdf
 
 
@@ -201,7 +201,7 @@ async def get_numeric_gpt_prediction(
     else:
         lower_bound_message = f"The outcome can not be lower than {lower_bound}."
 
-    summary_report, source_urls = await run_research_func(title)
+    summary_report, source_urls = await run_research_func(question_details)
 
     content = NUMERIC_PROMPT_TEMPLATE.format(
         title=title,
@@ -216,7 +216,7 @@ async def get_numeric_gpt_prediction(
     )
 
     async def ask_llm_to_get_cdf(content: str) -> tuple[list[float], str]:
-        rationale = await call_openAI(content)
+        rationale = await call_gpt5_reasoning_text(content, reasoning_effort="medium", verbosity="medium")
         percentile_values = extract_percentiles_from_response(rationale)
 
         comment = (

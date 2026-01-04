@@ -1,22 +1,49 @@
 import re
 from exa_py import Exa
-from prompts import SEARCH_QUERIES_PROMPT, EXA_SUMMARY_PROMPT
+from prompts_gpt5 import SEARCH_QUERIES_PROMPT
+from prompts_gpt5 import EXA_SUMMARY_PROMPT
 from config import EXA_API_KEY
 
 NUM_SEARCH_QUERIES = 5
 
 
-async def generate_search_queries(question: str, num_queries: int = 3) -> tuple[list[str], str]:
+def _truncate(text: str | None, max_chars: int) -> str:
+    if not text:
+        return ""
+    text = str(text).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3] + "..."
+
+
+async def generate_search_queries(question: str | dict, num_queries: int = 3) -> tuple[list[str], str]:
     """
     Use OpenAI to generate optimized search queries and suggest the most appropriate start date for the search.
     Returns (queries, start_date)
     """
     from llm_calls import call_openAI
-        
-    prompt = SEARCH_QUERIES_PROMPT.format(num_queries=num_queries, question=question)
+
+    if isinstance(question, dict):
+        title = str(question.get("title", ""))
+        background = _truncate(question.get("description") or question.get("background") or "", 800)
+        resolution_criteria = _truncate(question.get("resolution_criteria") or "", 900)
+        fine_print = _truncate(question.get("fine_print") or "", 900)
+    else:
+        title = str(question)
+        background = ""
+        resolution_criteria = ""
+        fine_print = ""
+
+    prompt = SEARCH_QUERIES_PROMPT.format(
+        num_queries=num_queries,
+        title=title,
+        background=background,
+        resolution_criteria=resolution_criteria,
+        fine_print=fine_print,
+    )
     
     try:
-        response = await call_openAI(prompt, model="gpt-4.1", temperature=0.1)
+        response = await call_openAI(prompt, temperature=0.1)
         
         print(f"OpenAI response for search query generation:\n{response}\n" + "="*50)
         
@@ -62,7 +89,7 @@ def call_exa_search(query: str, start_published_date: str = "2023-01-01T00:00:00
     return response
 
 
-async def run_exa_research(question: str) -> str:
+async def run_exa_research(question: str | dict) -> str:
     """
     Use OpenAI to generate optimized search queries, then use Exa Search API to find relevant content.
     Ensures no duplicate results based on URL.

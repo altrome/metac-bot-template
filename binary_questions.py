@@ -1,7 +1,7 @@
 import re
 import datetime
-from prompts import BINARY_PROMPT_TEMPLATE, BINARY_META_PROMPT_TEMPLATE
-from llm_calls import call_openAI, create_rationale_summary
+from prompts_gpt5 import BINARY_PROMPT_TEMPLATE, BINARY_META_PROMPT_TEMPLATE
+from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
 
 # Non-breaking / narrow spaces that sometimes appear before the '%' sign
 NBSPS = ("\u00A0", "\u202F", "\u2009", "\u2007")
@@ -104,7 +104,7 @@ async def get_binary_gpt_prediction(
     background = question_details["description"]
     fine_print = question_details["fine_print"]
 
-    summary_report, source_urls = await run_research_func(title)
+    summary_report, source_urls = await run_research_func(question_details)
 
     # Determine which template to use based on question type
     is_meta = is_meta_question(title)
@@ -128,7 +128,7 @@ async def get_binary_gpt_prediction(
     )
 
     async def get_rationale_and_probability(content: str) -> tuple[float, str]:
-        rationale = await call_openAI(content)
+        rationale = await call_gpt5_reasoning_text(content, reasoning_effort="medium", verbosity="medium")
 
         probability = extract_probability_percent(rationale)[0]
         comment = (
