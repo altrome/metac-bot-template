@@ -6,11 +6,14 @@ from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
 # Non-breaking / narrow spaces that sometimes appear before the '%' sign
 NBSPS = ("\u00A0", "\u202F", "\u2009", "\u2007")
 
-# Regex to locate the exact line that starts with "Probability:"
-PROB_LINE = re.compile(r'(?mi)^\s*Probability\s*:.*$')
+# Regex to locate the exact line that contains the final probability.
+# Supports both:
+#   "Probability: 37.50%" (standard template)
+#   "6) Probability: 37.50%" (meta template)
+PROB_LINE = re.compile(r"(?mi)^\s*(?:\d+\s*[\)\.]\s*)?Probability\s*:.*$")
 
 # Regex to extract a numeric value on that line; accepts optional '%' and decimals
-PROB_VALUE = re.compile(r'Probability\s*:\s*([0-9]+(?:[.,][0-9]+)?)\s*%?', re.I)
+PROB_VALUE = re.compile(r"Probability\s*:\s*([0-9]+(?:[.,][0-9]+)?)\s*%?", re.I)
 
 
 def is_meta_question(title: str) -> bool:
@@ -128,14 +131,28 @@ async def get_binary_gpt_prediction(
     )
 
     async def get_rationale_and_probability(content: str) -> tuple[float, str]:
-        rationale = await call_gpt5_reasoning_text(content, reasoning_effort="medium", verbosity="medium")
+        last_rationale = None
+        last_status = None
 
-        probability = extract_probability_percent(rationale)[0]
-        comment = (
-            f"Extracted Probability: {probability}%\n\nGPT's Answer: "
-            f"{rationale}\n\n\n"
+        # Small retry loop to handle occasional format drift.
+        for _ in range(3):
+            rationale = await call_gpt5_reasoning_text(
+                content, reasoning_effort="medium", verbosity="medium"
+            )
+            last_rationale = rationale
+            probability, status = extract_probability_percent(rationale)
+            last_status = status
+            if probability is not None:
+                comment = (
+                    f"Extracted Probability: {probability}%\n\nGPT's Answer: "
+                    f"{rationale}\n\n\n"
+                )
+                return probability, comment
+
+        raise ValueError(
+            f"Could not extract probability from model output (status={last_status}). "
+            f"Model output starts with: {str(last_rationale)[:300]}"
         )
-        return probability, comment
 
     import asyncio
     import numpy as np
