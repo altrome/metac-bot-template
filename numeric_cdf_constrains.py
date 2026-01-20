@@ -55,7 +55,7 @@ def _anti_flatten_postpass(
     open_lower: bool,
     open_upper: bool,
     min_step: float = 5e-05,
-    max_step: float = 0.59 - 1e-6,
+    max_step: float = 0.2,
     cv_thresh: float = 0.10,
     blend: float = 0.20,
 ) -> np.ndarray:
@@ -116,7 +116,7 @@ def enforce_cdf_constraints(
     open_lower: bool,
     open_upper: bool,
     min_step: float = 5e-05,
-    max_step: float = 0.59 - 1e-6,
+    max_step: float = 0.2,
 ) -> np.ndarray:
     """
     Normalize a CDF (typically 201 points in Metaculus) to satisfy:
