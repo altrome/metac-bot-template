@@ -25,6 +25,7 @@ from main_with_no_framework import (
     forecast_individual_question,
     get_post_details,
     run_research,
+    forecast_is_already_made,
 )
 from binary_questions import get_binary_gpt_prediction
 from numeric_questions import get_numeric_gpt_prediction
@@ -74,7 +75,8 @@ async def generate_prediction_for_question(
     question_id: int,
     post_id: int,
     num_runs: int = 5,
-) -> dict:
+    skip_previously_forecasted_questions: bool = True,
+) -> dict | None:
     """
     Generate prediction for a single question without posting it.
     
@@ -82,9 +84,10 @@ async def generate_prediction_for_question(
         question_id: Question ID
         post_id: Post ID
         num_runs: Number of prediction runs to perform (median is taken)
+        skip_previously_forecasted_questions: Skip questions that already have a forecast
     
     Returns:
-        dict: Prediction details including forecast and comment
+        dict: Prediction details including forecast and comment, or None if skipped
     """
     post_details = get_post_details(post_id)
     question_details = post_details["question"]
@@ -97,6 +100,11 @@ async def generate_prediction_for_question(
     print(f"Type: {question_type}")
     print(f"URL: https://www.metaculus.com/questions/{post_id}/")
     print(f"{'='*80}\n")
+    
+    # Check if forecast already exists
+    if forecast_is_already_made(post_details) and skip_previously_forecasted_questions:
+        print(f"⊘ Skipping: Forecast already made for question {question_id}\n")
+        return None
     
     # Generate prediction based on question type
     if question_type == "binary":
@@ -177,13 +185,29 @@ async def generate_predictions_for_tournament(tournament_code: str) -> None:
         log_file.write(f"{'='*80}\n\n")
         
         # Process each question
+        skipped_count = 0
         for idx, (question_id, post_id) in enumerate(open_questions, 1):
             print(f"\nProcessing question {idx}/{len(open_questions)}...")
             
             try:
                 prediction = await generate_prediction_for_question(
-                    question_id, post_id
+                    question_id, post_id,
+                    skip_previously_forecasted_questions=True
                 )
+                
+                # Check if question was skipped
+                if prediction is None:
+                    skipped_count += 1
+                    log_file.write(f"\n{'='*80}\n")
+                    log_file.write(f"Question {idx}/{len(open_questions)} - SKIPPED\n")
+                    log_file.write(f"{'='*80}\n")
+                    log_file.write(f"Question ID: {question_id}\n")
+                    log_file.write(f"Post ID: {post_id}\n")
+                    log_file.write(f"Reason: Forecast already made\n")
+                    log_file.write(f"URL: https://www.metaculus.com/questions/{post_id}/\n")
+                    log_file.write(f"{'='*80}\n\n")
+                    log_file.flush()
+                    continue
                 
                 # Write to log file
                 log_file.write(f"\n{'='*80}\n")
@@ -226,7 +250,9 @@ async def generate_predictions_for_tournament(tournament_code: str) -> None:
     print(f"\n{'#'*80}")
     print(f"# Prediction generation complete!")
     print(f"# Predictions saved to: {log_filename}")
-    print(f"# Total questions processed: {len(open_questions)}")
+    print(f"# Total questions found: {len(open_questions)}")
+    print(f"# Questions skipped (already forecasted): {skipped_count}")
+    print(f"# New predictions generated: {len(open_questions) - skipped_count}")
     print(f"# NOTE: No predictions were posted to Metaculus")
     print(f"{'#'*80}\n")
 
