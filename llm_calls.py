@@ -12,7 +12,7 @@ def _model_supports_reasoning_config(model: str) -> bool:
 def _simple_reasoning_effort_for_model(model: str) -> str:
     """Pick the lowest supported reasoning effort for the given model."""
     # GPT-5.2 family supports "none" as the lowest effort.
-    if model.startswith("gpt-5.2"):
+    if model.startswith("gpt-5.4"):
         return "none"
     # Older GPT-5 models use "minimal" as the lowest effort.
     if model.startswith("gpt-5"):
@@ -23,7 +23,7 @@ def _simple_reasoning_effort_for_model(model: str) -> str:
     return "none"
 
 
-async def call_openAI(prompt: str, model: str = "gpt-5-mini", temperature: float = 0.3) -> str:
+async def call_openAI(prompt: str, model: str = "gpt-5.4-mini", temperature: float = 0.3) -> str:
     """
     Makes a simple, low-latency text request with concurrent request limiting.
 
@@ -81,7 +81,7 @@ async def call_openAI(prompt: str, model: str = "gpt-5-mini", temperature: float
 
 async def call_gpt5_reasoning_text(
     prompt: str,
-    model: str = "gpt-5.2",
+    model: str = "gpt-5.4",
     reasoning_effort: str = "medium",
     verbosity: str = "medium",
     max_output_tokens: int | None = None,
@@ -99,7 +99,7 @@ async def call_gpt5_reasoning_text(
 
 async def call_gpt5_reasoning(
     prompt: str,
-    model: str = "gpt-5.2",
+    model: str = "gpt-5.4",
     reasoning_effort: str = "medium",
     verbosity: str = "medium",
     max_output_tokens: int = None,
