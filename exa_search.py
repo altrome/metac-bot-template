@@ -111,7 +111,7 @@ async def run_exa_research(question: str | dict) -> str:
         for i, query in enumerate(search_queries, 1):
             try:
                 search_data = call_exa_search(query, start_date)
-                
+
                 # Handle SearchResponse object from exa-py
                 if hasattr(search_data, 'results'):
                     results = search_data.results
@@ -120,11 +120,11 @@ async def run_exa_research(question: str | dict) -> str:
                 else:
                     print(f"Unexpected response format for query {i}: {type(search_data)}")
                     continue
-                
+
                 if not results:
                     print(f"No results found for query {i}.")
                     continue
-                
+
                 # Filter out duplicates and add unique results
                 for result in results:
                     # Convert result object to dict if needed
@@ -141,10 +141,10 @@ async def run_exa_research(question: str | dict) -> str:
                         }
                     else:
                         result_dict = result
-                    
+
                     url = result_dict.get('url', '')
-                    summary = result_dict.get('summary', '')
-                    
+                    summary = (result_dict.get('summary') or '')
+
                     # Filter out results with no relevant content and avoid duplicates
                     # Use regex to catch variations of "no relevant content found"
                     if url and url not in seen_urls and not re.search(r'no\s+relevant\s+content\s+found', summary.lower()):
@@ -152,7 +152,7 @@ async def run_exa_research(question: str | dict) -> str:
                         result_dict['source_query'] = query
                         result_dict['query_number'] = i
                         all_unique_results.append(result_dict)
-                        
+
             except Exception as e:
                 print(f"Error processing query {i} ('{query}'): {str(e)}")
                 continue
