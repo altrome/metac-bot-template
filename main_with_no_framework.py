@@ -16,7 +16,7 @@ from config import METACULUS_TOKEN, ASKNEWS_CLIENT_ID, ASKNEWS_SECRET, EXA_API_K
 SUBMIT_PREDICTION = True  # set to True to publish your predictions to Metaculus
 USE_EXAMPLE_QUESTIONS = False  # set to True to forecast example questions rather than the tournament questions
 NUM_RUNS_PER_QUESTION = 5  # The median forecast is taken between NUM_RUNS_PER_QUESTION runs
-SKIP_PREVIOUSLY_FORECASTED_QUESTIONS = True
+SKIP_PREVIOUSLY_FORECASTED_QUESTIONS = False
 
 
 # The tournament IDs below can be used for testing your bot.
