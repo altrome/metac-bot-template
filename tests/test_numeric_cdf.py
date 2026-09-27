@@ -208,7 +208,6 @@ def test_extract_tail_probabilities_missing_lines():
 
 def _mock_llm(responses):
     """Return an async fake for call_gpt5_reasoning_text that also captures prompts."""
-    import asyncio
 
     captured = []
 
@@ -252,6 +251,15 @@ def test_full_pipeline_carries_tails_with_mocked_llm(monkeypatch):
     monkeypatch.setattr(nq, "call_gpt5_reasoning_text", fake.reasoning)
     monkeypatch.setattr(nq, "create_rationale_summary", fake.summary)
 
+    async def fake_indicator(question_details):
+        return (
+            "Official data (latest published values of the series this question "
+            "resolves against):\nFRED series PAYEMS - All Employees, Total Nonfarm\n"
+            "2026-08-01: 162,455"
+        )
+
+    monkeypatch.setattr(nq, "gather_indicator_data", fake_indicator)
+
     question_details = {
         "title": "How many barrels in the SPR?",
         "resolution_criteria": "criteria",
@@ -272,6 +280,8 @@ def test_full_pipeline_carries_tails_with_mocked_llm(monkeypatch):
     # The prompt must request tail probabilities on open bounds...
     assert "Probability below 300000: XX" in captured[0]
     assert "Probability above 450000: XX" in captured[0]
+    # ...and the official indicator block must reach the prompt.
+    assert "FRED series PAYEMS" in captured[0]
     # ...and the elicited tails must reach the final median CDF:
     # below = median(12%, 4%->floor 5%) = 8.5%, above = median(7%, 15%) = 11%.
     assert abs(cdf[0] - 0.085) < 5e-3
@@ -298,6 +308,11 @@ def test_full_pipeline_closed_bounds_do_not_request_tails(monkeypatch):
 
     monkeypatch.setattr(nq, "call_gpt5_reasoning_text", fake.reasoning)
     monkeypatch.setattr(nq, "create_rationale_summary", fake.summary)
+
+    async def fake_indicator(question_details):
+        return ""
+
+    monkeypatch.setattr(nq, "gather_indicator_data", fake_indicator)
 
     question_details = {
         "title": "Bounded question",
