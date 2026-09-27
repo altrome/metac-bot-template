@@ -1,9 +1,16 @@
 import re
 import datetime
 import numpy as np
+from scipy.interpolate import PchipInterpolator
 from prompts_gpt5 import NUMERIC_PROMPT_TEMPLATE
 from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
 from numeric_cdf_constrains import enforce_cdf_constraints, pdf_sparkline_from_cdf, cdf_diagnostics, ascii_plot_cdf
+
+# Minimum probability mass kept outside each open bound, mirroring the Metaculus
+# baseline convention. The old pipeline let this collapse to 0.1%, which cost
+# ~200 points every time a question resolved outside its range.
+MIN_OPEN_BOUND_TAIL_MASS = 0.05
+MAX_TOTAL_TAIL_MASS = 0.90
 
 
 def extract_percentiles_from_response(forecast_text: str) -> dict:
@@ -49,6 +56,24 @@ def extract_percentiles_from_response(forecast_text: str) -> dict:
         raise ValueError(f"Could not extract prediction from response: {forecast_text}")
 
 
+def extract_tail_probabilities(forecast_text: str) -> tuple[float | None, float | None]:
+    """
+    Return (below_percent, above_percent) from the model's open-bound tail
+    probability lines, e.g. "Probability below 300000: 12". Missing lines
+    (or missing numbers) give None so the caller can apply the floor.
+    """
+    below = None
+    above = None
+    for line in forecast_text.split("\n"):
+        match = re.search(r"(?i)^\s*probability\s+below[^:]*:\s*([\d,]+(?:\.\d+)?)", line)
+        if match:
+            below = float(match.group(1).replace(",", ""))
+        match = re.search(r"(?i)^\s*probability\s+above[^:]*:\s*([\d,]+(?:\.\d+)?)", line)
+        if match:
+            above = float(match.group(1).replace(",", ""))
+    return below, above
+
+
 def generate_continuous_cdf(
     percentile_values: dict,
     question_type: str,
@@ -58,51 +83,62 @@ def generate_continuous_cdf(
     lower_bound: float,
     zero_point: float | None,
     cdf_size: int,
+    below_bound_probability: float | None = None,
+    above_bound_probability: float | None = None,
 ) -> list[float]:
     """
-    Returns: list[float]: A list of 201 float values representing the CDF.
+    Build a Metaculus-compatible CDF from elicited percentiles plus the
+    model's probabilities that the outcome falls outside the question's range.
+
+    The percentiles describe the outcome conditional on it landing inside the
+    range; on open bounds the tail probabilities carry the outside mass,
+    floored at MIN_OPEN_BOUND_TAIL_MASS. The bounds anchor the CDF endpoints
+    (closed bounds at 0.0/1.0), the percentiles anchor the interior, and a
+    monotone PCHIP interpolation fills the grid.
+
+    Returns: list[float]: A list of cdf_size float values representing the CDF.
     """
 
-    percentile_max = max(float(key) for key in percentile_values.keys())
-    percentile_min = min(float(key) for key in percentile_values.keys())
     range_min = lower_bound
     range_max = upper_bound
     range_size = range_max - range_min
     buffer = 1 if range_size > 100 else 0.01 * range_size
 
-    # Adjust any values that are exactly at the bounds
-    for percentile, value in list(percentile_values.items()):
-        if not open_lower_bound and value <= range_min + buffer:
-            percentile_values[percentile] = range_min + buffer
-        if not open_upper_bound and value >= range_max - buffer:
-            percentile_values[percentile] = range_max - buffer
-
-    # Set cdf values outside range
-    if open_upper_bound:
-        if range_max > percentile_values[percentile_max]:
-            percentile_values[int(100 - (0.5 * (100 - percentile_max)))] = range_max
-    else:
-        percentile_values[100] = range_max
-
-    # Set cdf values outside range
+    # Outside-range mass on open bounds. Values out of range are common enough
+    # that this mass is always real, never the 0.1% API validity floor.
+    lower_tail_mass = 0.0
+    upper_tail_mass = 0.0
     if open_lower_bound:
-        if range_min < percentile_values[percentile_min]:
-            percentile_values[int(0.5 * percentile_min)] = range_min
-    else:
-        percentile_values[0] = range_min
+        elicited = (below_bound_probability or 0.0) / 100.0
+        lower_tail_mass = min(max(elicited, MIN_OPEN_BOUND_TAIL_MASS), 0.95)
+    if open_upper_bound:
+        elicited = (above_bound_probability or 0.0) / 100.0
+        upper_tail_mass = min(max(elicited, MIN_OPEN_BOUND_TAIL_MASS), 0.95)
+    total_tail_mass = lower_tail_mass + upper_tail_mass
+    if total_tail_mass > MAX_TOTAL_TAIL_MASS:
+        scale = MAX_TOTAL_TAIL_MASS / total_tail_mass
+        lower_tail_mass *= scale
+        upper_tail_mass *= scale
+    interior_mass = 1.0 - lower_tail_mass - upper_tail_mass
 
-    sorted_percentile_values = dict(sorted(percentile_values.items()))
-
-    # Normalize percentile keys
-    normalized_percentile_values = {}
-    for key, value in sorted_percentile_values.items():
-        percentile = float(key) / 100
-        normalized_percentile_values[percentile] = value
-
-
-    value_percentiles = {
-        value: key for key, value in normalized_percentile_values.items()
+    # Anchor points (value -> CDF height): the bounds carry the tail masses and
+    # each elicited percentile carries its share of the interior mass. Values
+    # are pulled strictly inside the range; an out-of-range percentile response
+    # collapses to the edge and its mass lives in the tails instead.
+    anchors: dict[float, float] = {
+        range_min: lower_tail_mass,
+        range_max: 1.0 - upper_tail_mass,
     }
+    for percentile, value in percentile_values.items():
+        percentile_fraction = min(max(float(percentile) / 100.0, 0.0), 1.0)
+        height = lower_tail_mass + interior_mass * percentile_fraction
+        anchored_value = min(max(float(value), range_min + buffer), range_max - buffer)
+        anchors[anchored_value] = max(height, anchors.get(anchored_value, 0.0))
+
+    anchor_values = np.array(sorted(anchors.keys()), dtype=float)
+    anchor_heights = np.maximum.accumulate(
+        np.array([anchors[value] for value in anchor_values])
+    )
 
     # function for log scaled questions
     def generate_cdf_locations(range_min, range_max, zero_point):
@@ -113,58 +149,29 @@ def generate_continuous_cdf(
             scale = lambda x: range_min + (range_max - range_min) * (
                 deriv_ratio**x - 1
             ) / (deriv_ratio - 1)
-        return [scale(x) for x in np.linspace(0, 1, cdf_size)]
+        return np.array([scale(x) for x in np.linspace(0, 1, cdf_size)])
 
     cdf_xaxis = generate_cdf_locations(range_min, range_max, zero_point)
 
-    def linear_interpolation(x_values, xy_pairs):
-        # Sort the xy_pairs by x-values
-        sorted_pairs = sorted(xy_pairs.items())
+    if len(anchor_values) >= 2:
+        pchip = PchipInterpolator(anchor_values, anchor_heights)
+        continuous_cdf = np.asarray(pchip(cdf_xaxis), dtype=float)
+    else:
+        # Degenerate input (no usable percentiles): flat interior
+        continuous_cdf = np.full(cdf_size, 0.5)
+    continuous_cdf = np.clip(continuous_cdf, 0.0, 1.0)
 
-        # Extract sorted x and y values
-        known_x = [pair[0] for pair in sorted_pairs]
-        known_y = [pair[1] for pair in sorted_pairs]
-
-        # Initialize the result list
-        y_values = []
-
-        for x in x_values:
-            # Check if x is exactly in the known x values
-            if x in known_x:
-                y_values.append(known_y[known_x.index(x)])
-            else:
-                # Find the indices of the two nearest known x-values
-                i = 0
-                while i < len(known_x) and known_x[i] < x:
-                    i += 1
-
-                # If x is outside the range of known x-values, use the nearest endpoint
-                if i == 0:
-                    y_values.append(known_y[0])
-                elif i == len(known_x):
-                    y_values.append(known_y[-1])
-                else:
-                    # Perform linear interpolation
-                    x0, x1 = known_x[i - 1], known_x[i]
-                    y0, y1 = known_y[i - 1], known_y[i]
-
-                    # Linear interpolation formula
-                    y = y0 + (x - x0) * (y1 - y0) / (x1 - x0)
-                    y_values.append(y)
-
-        return y_values
-
-    continuous_cdf = linear_interpolation(cdf_xaxis, value_percentiles)
-
-    # Ensure CDF follows metaculus constraints
-    continuous_cdf = enforce_cdf_constraints(continuous_cdf, open_lower_bound, open_upper_bound)
+    # Ensure CDF follows metaculus constraints (elicited tail masses survive)
+    continuous_cdf = enforce_cdf_constraints(
+        continuous_cdf, open_lower_bound, open_upper_bound
+    )
 
     # Console: shape of the PDF (sparkline) and ASCII mini-plot of the CDF
     print("pdf sparkline:", pdf_sparkline_from_cdf(continuous_cdf))
     cdf_diagnostics(continuous_cdf)
     ascii_plot_cdf(continuous_cdf, width=80, height=16, y_ticks=(0.0, 0.25, 0.5, 0.75, 1.0))
 
-    return continuous_cdf
+    return list(continuous_cdf)
 
 
 async def get_numeric_gpt_prediction(
@@ -193,13 +200,29 @@ async def get_numeric_gpt_prediction(
 
     # Create messages about the bounds that are passed in the LLM prompt
     if open_upper_bound:
-        upper_bound_message = ""
+        upper_bound_message = (
+            f"The question's range ends at {upper_bound}, but the outcome may be higher. "
+            f"Estimate the percentiles assuming the outcome stays within the range, and "
+            f"separately estimate the probability that it is higher than {upper_bound}."
+        )
     else:
         upper_bound_message = f"The outcome can not be higher than {upper_bound}."
     if open_lower_bound:
-        lower_bound_message = ""
+        lower_bound_message = (
+            f"The question's range starts at {lower_bound}, but the outcome may be lower. "
+            f"Estimate the percentiles assuming the outcome stays within the range, and "
+            f"separately estimate the probability that it is lower than {lower_bound}."
+        )
     else:
         lower_bound_message = f"The outcome can not be lower than {lower_bound}."
+
+    # Tail-probability lines for the final output block (only on open bounds)
+    below_probability_line = (
+        f"Probability below {lower_bound}: XX\n" if open_lower_bound else ""
+    )
+    above_probability_line = (
+        f"Probability above {upper_bound}: XX\n" if open_upper_bound else ""
+    )
 
     summary_report, source_urls = await run_research_func(question_details)
 
@@ -212,15 +235,19 @@ async def get_numeric_gpt_prediction(
         summary_report=summary_report,
         lower_bound_message=lower_bound_message,
         upper_bound_message=upper_bound_message,
+        below_probability_line=below_probability_line,
+        above_probability_line=above_probability_line,
         units=unit_of_measure,
     )
 
     async def ask_llm_to_get_cdf(content: str) -> tuple[list[float], str]:
         rationale = await call_gpt5_reasoning_text(content, reasoning_effort="medium", verbosity="medium")
         percentile_values = extract_percentiles_from_response(rationale)
+        below_probability, above_probability = extract_tail_probabilities(rationale)
 
         comment = (
-            f"Extracted Percentile_values: {percentile_values}\n\nGPT's Answer: "
+            f"Extracted Percentile_values: {percentile_values}\n"
+            f"Extracted tail probabilities: below={below_probability}% above={above_probability}%\n\nGPT's Answer: "
             f"{rationale}\n\n\n"
         )
 
@@ -233,6 +260,8 @@ async def get_numeric_gpt_prediction(
             lower_bound,
             zero_point,
             cdf_size,
+            below_bound_probability=below_probability,
+            above_bound_probability=above_probability,
         )
 
         return cdf, comment

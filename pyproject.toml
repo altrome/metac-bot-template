@@ -18,7 +18,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "ipykernel>=6.29.5",
+    "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
