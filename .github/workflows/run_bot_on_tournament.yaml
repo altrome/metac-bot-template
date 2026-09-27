@@ -15,6 +15,9 @@ concurrency:
 jobs:
   daily_build:
     runs-on: ubuntu-latest # determines the machine that will run the job - keep as is
+    # Cap hung runs so they don't hold the concurrency group and block the next
+    # scheduled run (GitHub's default job timeout is 6 hours).
+    timeout-minutes: 90
     steps: # sets up the steps that will be run in order
       # setup repository with all necessary dependencies - keep as is
       - name: Check out repository

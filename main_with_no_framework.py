@@ -30,9 +30,10 @@ RESPIRATORY_OUTLOOK_ID = 3411
 FALL_2025_AI_BENCHMARKING_ID = 32813
 SPRING_2026_AI_BENCHMARKING_ID = 32916
 SUMMER_2026_AI_BENCHMARKING_ID = 33022
+FALL_2026_AI_BENCHMARKING_ID = 33121
 
 # Current tournament IDs (these should match the ones used in main.py)
-CURRENT_AI_COMPETITION_ID = SUMMER_2026_AI_BENCHMARKING_ID  # Main AI competition
+CURRENT_AI_COMPETITION_ID = FALL_2026_AI_BENCHMARKING_ID  # Main AI competition
 CURRENT_MINIBENCH_ID = "minibench"  # MiniBench tournament (The project ID for the currently active minibench is always "minibench")
 
 # The example questions can be used for testing your bot. (note that question and post id are not always the same)
@@ -365,10 +366,14 @@ async def forecast_questions(
             print(forecast_summary)
 
     if errors:
-        print("-----------------------------------------------\nErrors:\n")
+        print(f"-----------------------------------------------\nErrors: {len(errors)}/{len(open_question_id_post_id)} questions failed\n")
         error_message = f"Errors were encountered: {errors}"
         print(error_message)
-        raise RuntimeError(error_message)
+        # Partial failures only get logged: one bad question shouldn't fail the
+        # run and hide that the others were forecasted. Only a total failure
+        # (likely a systemic issue like auth or a wrong tournament ID) raises.
+        if len(errors) == len(open_question_id_post_id):
+            raise RuntimeError(error_message)
 
 
 
