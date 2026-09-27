@@ -1299,6 +1299,7 @@ dependencies = [
     { name = "python-decouple" },
     { name = "python-dotenv" },
     { name = "requests" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -1318,6 +1319,7 @@ requires-dist = [
     { name = "python-decouple", specifier = ">=3.8" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "requests", specifier = ">=2.32.3" },
+    { name = "scipy", specifier = ">=1.16.0" },
 ]
 provides-extras = ["dev"]
 

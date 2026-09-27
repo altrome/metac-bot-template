@@ -1,8 +1,11 @@
 import os
+
 import dotenv
 
-# Load environment variables once at module level
-dotenv.load_dotenv()
+# Load environment variables once at module level.
+# override=True: the .env file is the source of truth, so a stale exported
+# variable (e.g. an old OPENAI_API_KEY in the shell profile) cannot shadow it.
+dotenv.load_dotenv(override=True)
 
 # Environment variables
 METACULUS_TOKEN = os.getenv("METACULUS_TOKEN")

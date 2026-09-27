@@ -130,6 +130,7 @@ Rules
 - Do not include hidden reasoning steps; keep rationale concise.
 - Follow the unit/format requirements exactly.
 - Respect any explicit bounds stated in the prompt (upper/lower).
+- If an Official data block is present, its values are the latest published readings of the series the question resolves against; trust them over conflicting or older numbers in the Research summary.
 
 Question
 Title: {title}
@@ -138,6 +139,7 @@ Resolution criteria: {resolution_criteria}
 Fine print: {fine_print}
 Answer units: {units}
 Research summary: {summary_report}
+{official_data}
 Today: {today}
 {lower_bound_message}
 {upper_bound_message}

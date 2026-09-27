@@ -1,10 +1,18 @@
-import re
 import datetime
+import re
+
 import numpy as np
 from scipy.interpolate import PchipInterpolator
-from prompts_gpt5 import NUMERIC_PROMPT_TEMPLATE
+
+from indicator_data import gather_indicator_data
 from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
-from numeric_cdf_constrains import enforce_cdf_constraints, pdf_sparkline_from_cdf, cdf_diagnostics, ascii_plot_cdf
+from numeric_cdf_constrains import (
+    ascii_plot_cdf,
+    cdf_diagnostics,
+    enforce_cdf_constraints,
+    pdf_sparkline_from_cdf,
+)
+from prompts_gpt5 import NUMERIC_PROMPT_TEMPLATE
 
 # Minimum probability mass kept outside each open bound, mirroring the Metaculus
 # baseline convention. The old pipeline let this collapse to 0.1%, which cost
@@ -178,7 +186,7 @@ async def get_numeric_gpt_prediction(
     question_details: dict, num_runs: int, run_research_func
 ) -> tuple[list[float], str]:
 
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     title = question_details["title"]
     resolution_criteria = question_details["resolution_criteria"]
     background = question_details["description"]
@@ -225,6 +233,7 @@ async def get_numeric_gpt_prediction(
     )
 
     summary_report, source_urls = await run_research_func(question_details)
+    official_data_block = await gather_indicator_data(question_details)
 
     content = NUMERIC_PROMPT_TEMPLATE.format(
         title=title,
@@ -233,6 +242,7 @@ async def get_numeric_gpt_prediction(
         resolution_criteria=resolution_criteria,
         fine_print=fine_print,
         summary_report=summary_report,
+        official_data=official_data_block,
         lower_bound_message=lower_bound_message,
         upper_bound_message=upper_bound_message,
         below_probability_line=below_probability_line,
