@@ -52,8 +52,8 @@ def _project_bounded_simplex(
 
 def _anti_flatten_postpass(
     cdf_in: np.ndarray,
-    open_lower: bool,
-    open_upper: bool,
+    lower: float,
+    upper: float,
     min_step: float = 5e-05,
     max_step: float = 0.2,
     cv_thresh: float = 0.10,
@@ -62,7 +62,7 @@ def _anti_flatten_postpass(
     """
     If the CDF’s increments are too uniform (low coefficient of variation),
     blend in a Gaussian (bell-shaped) kernel and re-project to respect:
-      - total mass (open/closed bounds)
+      - total mass (the given endpoint masses, e.g. elicited open-bound tails)
       - per-step limits in [min_step, max_step]
 
     cv_thresh: flatness threshold; if CV(diff(cdf)) < cv_thresh, apply correction.
@@ -94,8 +94,6 @@ def _anti_flatten_postpass(
     d_tilt = (1.0 - blend) * d + blend * (w * d.sum())
 
     # Re-project to bounds and correct total according to limits.
-    lower = 0.001 if open_lower else 0.0
-    upper = 0.999 if open_upper else 1.0
     total = upper - lower
 
     L = min_step
@@ -128,7 +126,9 @@ def enforce_cdf_constraints(
           - open lower  → cdf[0] ≥ 0.001
           - open upper  → cdf[-1] ≤ 0.999
           - closed      → 0.0 and 1.0 respectively.
-      • Preserve total mass and keep the original increment shape as much as possible.
+      • PRESERVE the endpoint masses of the input: 0.001/0.999 are API validity
+        floors, not targets. A CDF that already leaves real mass outside an
+        open bound (e.g. 5%) keeps it; only degenerate endpoints are moved.
 
     It also applies an anti-flatten post-process when increments end up too uniform,
     to avoid a near-uniform pdf (“rectangle” look).
@@ -142,18 +142,29 @@ def enforce_cdf_constraints(
     if n < 2:
         return cdf_raw
 
-    # 1) Limits according to 'open'
-    lower_limit = 0.001 if open_lower else 0.0
-    upper_limit = 0.999 if open_upper else 1.0
-
-    # 2) Basic cleanup: clamp to [0,1] and enforce monotonicity
+    # 1) Basic cleanup: clamp to [0,1] and enforce monotonicity
     c = np.clip(cdf_raw, 0.0, 1.0)
     c = np.maximum.accumulate(c)
+
+    # 2) Target endpoints. On open bounds the 0.001/0.999 API limits act as
+    #    floors/caps only: healthy elicited tail masses pass through untouched.
+    if open_lower:
+        lower_target = float(np.clip(c[0], 0.001, 0.999))
+    else:
+        lower_target = 0.0
+    if open_upper:
+        upper_target = float(np.clip(c[-1], 0.001, 0.999))
+    else:
+        upper_target = 1.0
+    if upper_target - lower_target < 1e-6:
+        # Degenerate input (no usable span): fall back to the maximal API span
+        lower_target = 0.001 if open_lower else 0.0
+        upper_target = 0.999 if open_upper else 1.0
 
     # 3) Raw increments and desired mass
     d_raw = np.diff(c)
     d_raw = np.maximum(d_raw, 0.0)  # no negative steps
-    total = upper_limit - lower_limit
+    total = upper_target - lower_target
     m = n - 1
 
     # 4) Adjust feasible min_step if the range is small
@@ -166,15 +177,15 @@ def enforce_cdf_constraints(
 
     # 6) Reconstruct + clamp endpoints
     cdf_fix = np.empty_like(cdf_raw)
-    cdf_fix[0] = lower_limit
-    cdf_fix[1:] = lower_limit + np.cumsum(d_proj)
-    cdf_fix[-1] = min(cdf_fix[-1], upper_limit)
+    cdf_fix[0] = lower_target
+    cdf_fix[1:] = lower_target + np.cumsum(d_proj)
+    cdf_fix[-1] = min(cdf_fix[-1], upper_target)
 
     # 7) Anti-flatten post-pass if increments are still too uniform
     cdf_fix = _anti_flatten_postpass(
         cdf_fix,
-        open_lower=open_lower,
-        open_upper=open_upper,
+        lower=lower_target,
+        upper=upper_target,
         min_step=L,              # use the feasible L we computed
         max_step=max_step,
         cv_thresh=0.10,          # lower to 0.08 if flatness persists

@@ -161,14 +161,15 @@ Percentile 40: XX
 Percentile 60: XX
 Percentile 80: XX
 Percentile 90: XX
-
+{below_probability_line}{above_probability_line}
 Formatting constraints
 - Do not use scientific notation.
 - Do not include units in the percentile values.
 - Use plain numbers; commas allowed (e.g., 1,000,000).
 - Each Percentile line must contain exactly one number after the colon (no extra numbers).
 - Percentile values must be non-decreasing (P10 ≤ P20 ≤ P40 ≤ P60 ≤ P80 ≤ P90).
-- If bounds are given, ensure all percentile values respect them.
+- Percentile values must lie within the question's range and respect any hard bounds stated above.
+- The Probability lines, when present, give the percent chance (0-100) that the outcome falls outside the range on that side; the Percentile lines describe the outcome assuming it stays inside the range.
 """
 
 
