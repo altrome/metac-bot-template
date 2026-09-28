@@ -1,7 +1,12 @@
-import re
 import datetime
+import re
+
+from llm_calls import (
+    call_forecast_reasoner,
+    create_rationale_summary,
+    rationale_text_from_comment,
+)
 from prompts_gpt5 import MULTIPLE_CHOICE_PROMPT_TEMPLATE
-from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
 
 
 def extract_option_probabilities_from_response(forecast_text: str, options) -> float:
@@ -87,7 +92,7 @@ async def get_multiple_choice_gpt_prediction(
     run_research_func,
 ) -> tuple[dict[str, float], str]:
 
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     title = question_details["title"]
     resolution_criteria = question_details["resolution_criteria"]
     background = question_details["description"]
@@ -108,15 +113,16 @@ async def get_multiple_choice_gpt_prediction(
 
     async def ask_llm_for_multiple_choice_probabilities(
         content: str,
+        run_index: int,
     ) -> tuple[dict[str, float], str]:
-        rationale = await call_gpt5_reasoning_text(content, reasoning_effort="medium", verbosity="medium")
+        rationale, vendor = await call_forecast_reasoner(content, run_index)
 
         option_probabilities = extract_option_probabilities_from_response(
             rationale, options
         )
 
         comment = (
-            f"EXTRACTED_PROBABILITIES: {option_probabilities}\n\nGPT's Answer: "
+            f"EXTRACTED_PROBABILITIES: {option_probabilities}\n\n{vendor}'s Answer: "
             f"{rationale}\n\n\n"
         )
 
@@ -128,7 +134,7 @@ async def get_multiple_choice_gpt_prediction(
     import asyncio
 
     probability_yes_per_category_and_comment_pairs = await asyncio.gather(
-        *[ask_llm_for_multiple_choice_probabilities(content) for _ in range(num_runs)]
+        *[ask_llm_for_multiple_choice_probabilities(content, i) for i in range(num_runs)]
     )
     comments = [pair[1] for pair in probability_yes_per_category_and_comment_pairs]
     final_comment_sections = [
@@ -149,7 +155,7 @@ async def get_multiple_choice_gpt_prediction(
     # Create consolidated summary if multiple runs
     consolidated_summary = ""
     if num_runs > 1:
-        rationales = [pair[1].split("GPT's Answer: ", 1)[1] if "GPT's Answer: " in pair[1] else pair[1] for pair in probability_yes_per_category_and_comment_pairs]
+        rationales = [rationale_text_from_comment(pair[1]) for pair in probability_yes_per_category_and_comment_pairs]
         # Format prediction as readable percentages
         prediction_text = ", ".join([f"{option}: {prob:.1%}" for option, prob in average_probability_yes_per_category.items()])
         consolidated_summary = await create_rationale_summary(

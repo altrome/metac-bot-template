@@ -5,7 +5,11 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from indicator_data import gather_indicator_data
-from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
+from llm_calls import (
+    call_forecast_reasoner,
+    create_rationale_summary,
+    rationale_text_from_comment,
+)
 from numeric_cdf_constrains import (
     ascii_plot_cdf,
     cdf_diagnostics,
@@ -250,14 +254,14 @@ async def get_numeric_gpt_prediction(
         units=unit_of_measure,
     )
 
-    async def ask_llm_to_get_cdf(content: str) -> tuple[list[float], str]:
-        rationale = await call_gpt5_reasoning_text(content, reasoning_effort="medium", verbosity="medium")
+    async def ask_llm_to_get_cdf(content: str, run_index: int) -> tuple[list[float], str]:
+        rationale, vendor = await call_forecast_reasoner(content, run_index)
         percentile_values = extract_percentiles_from_response(rationale)
         below_probability, above_probability = extract_tail_probabilities(rationale)
 
         comment = (
             f"Extracted Percentile_values: {percentile_values}\n"
-            f"Extracted tail probabilities: below={below_probability}% above={above_probability}%\n\nGPT's Answer: "
+            f"Extracted tail probabilities: below={below_probability}% above={above_probability}%\n\n{vendor}'s Answer: "
             f"{rationale}\n\n\n"
         )
 
@@ -279,7 +283,7 @@ async def get_numeric_gpt_prediction(
     import asyncio
 
     cdf_and_comment_pairs = await asyncio.gather(
-        *[ask_llm_to_get_cdf(content) for _ in range(num_runs)]
+        *[ask_llm_to_get_cdf(content, i) for i in range(num_runs)]
     )
     comments = [pair[1] for pair in cdf_and_comment_pairs]
     final_comment_sections = [
@@ -292,7 +296,7 @@ async def get_numeric_gpt_prediction(
     # Create consolidated summary if multiple runs
     consolidated_summary = ""
     if num_runs > 1:
-        rationales = [pair[1].split("GPT's Answer: ", 1)[1] if "GPT's Answer: " in pair[1] else pair[1] for pair in cdf_and_comment_pairs]
+        rationales = [rationale_text_from_comment(pair[1]) for pair in cdf_and_comment_pairs]
         consolidated_summary = await create_rationale_summary(
             rationales=rationales,
             question_title=title,

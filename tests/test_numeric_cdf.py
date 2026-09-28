@@ -207,14 +207,14 @@ def test_extract_tail_probabilities_missing_lines():
 
 
 def _mock_llm(responses):
-    """Return an async fake for call_gpt5_reasoning_text that also captures prompts."""
+    """Return an async fake for call_forecast_reasoner that also captures prompts."""
 
     captured = []
 
     class _Fake:
-        async def reasoning(self, content, **kwargs):
+        async def reasoning(self, content, run_index):
             captured.append(content)
-            return responses[len(captured) % len(responses)]
+            return responses[len(captured) % len(responses)], "GPT"
 
         async def summary(self, **kwargs):
             return "consolidated summary"
@@ -248,7 +248,7 @@ def test_full_pipeline_carries_tails_with_mocked_llm(monkeypatch):
     async def fake_research(question_details):
         return "research summary", ["https://example.com"]
 
-    monkeypatch.setattr(nq, "call_gpt5_reasoning_text", fake.reasoning)
+    monkeypatch.setattr(nq, "call_forecast_reasoner", fake.reasoning)
     monkeypatch.setattr(nq, "create_rationale_summary", fake.summary)
 
     async def fake_indicator(question_details):
@@ -306,7 +306,7 @@ def test_full_pipeline_closed_bounds_do_not_request_tails(monkeypatch):
     async def fake_research(question_details):
         return "research summary", []
 
-    monkeypatch.setattr(nq, "call_gpt5_reasoning_text", fake.reasoning)
+    monkeypatch.setattr(nq, "call_forecast_reasoner", fake.reasoning)
     monkeypatch.setattr(nq, "create_rationale_summary", fake.summary)
 
     async def fake_indicator(question_details):
