@@ -1,15 +1,23 @@
 import asyncio
 import json
+import re
 
 import requests
-from binary_questions import get_binary_gpt_prediction
-from numeric_questions import get_numeric_gpt_prediction
-from multiple_choice_questions import get_multiple_choice_gpt_prediction
-from exa_search import run_exa_research
-from perplexity_search import call_perplexity
-from asknews_search import call_asknews
-from config import METACULUS_TOKEN, ASKNEWS_CLIENT_ID, ASKNEWS_SECRET, EXA_API_KEY, PERPLEXITY_API_KEY
 
+from asknews_search import call_asknews
+from binary_questions import get_binary_gpt_prediction
+from config import (
+    ASKNEWS_CLIENT_ID,
+    ASKNEWS_SECRET,
+    EXA_API_KEY,
+    METACULUS_TOKEN,
+    PERPLEXITY_API_KEY,
+)
+from exa_gathering import MetaculusQuestion, gather_evidence
+from exa_search import run_exa_research
+from multiple_choice_questions import get_multiple_choice_gpt_prediction
+from numeric_questions import get_numeric_gpt_prediction
+from perplexity_search import call_perplexity
 
 ######################### CONSTANTS #########################
 # Constants
@@ -17,6 +25,11 @@ SUBMIT_PREDICTION = True  # set to True to publish your predictions to Metaculus
 USE_EXAMPLE_QUESTIONS = False  # set to True to forecast example questions rather than the tournament questions
 NUM_RUNS_PER_QUESTION = 5  # The median forecast is taken between NUM_RUNS_PER_QUESTION runs
 SKIP_PREVIOUSLY_FORECASTED_QUESTIONS = True
+EVIDENCE_GATHERING_CONCURRENCY = 4  # questions gathering evidence at once (Exa deep-search rate limits)
+
+# Claude+Exa deep search is heavyweight per question; the semaphore keeps a burst of
+# new questions well inside Exa's rate limits on the run when many open at once.
+_evidence_semaphore = asyncio.Semaphore(EVIDENCE_GATHERING_CONCURRENCY)
 
 
 # The tournament IDs below can be used for testing your bot.
@@ -149,14 +162,7 @@ def list_posts_from_tournament(
         "limit": count,
         "offset": offset,
         "order_by": "-hotness",
-        "forecast_type": ",".join(
-            [
-                "binary",
-                "multiple_choice",
-                "numeric",
-                "discrete",
-            ]
-        ),
+        "forecast_type": "binary,multiple_choice,numeric,discrete",
         "tournaments": [tournament_id],
         "statuses": "open",
         "include_description": "true",
@@ -164,7 +170,7 @@ def list_posts_from_tournament(
     url = f"{API_BASE_URL}/posts/"
     response = requests.get(url, **AUTH_HEADERS, params=url_qparams)  # type: ignore
     if not response.ok:
-        raise Exception(response.text)
+        raise RuntimeError(response.text)
     data = json.loads(response.content)
     return data
 
@@ -172,7 +178,7 @@ def list_posts_from_tournament(
 def get_open_question_ids_from_tournament(tournament_id: int = CURRENT_AI_COMPETITION_ID) -> list[tuple[int, int]]:
     posts = list_posts_from_tournament(tournament_id)
 
-    post_dict = dict()
+    post_dict = {}
     for post in posts["results"]:
         if question := post.get("question"):
             # single question post
@@ -202,10 +208,31 @@ def get_post_details(post_id: int) -> dict:
         **AUTH_HEADERS,  # type: ignore
     )
     if not response.ok:
-        raise Exception(response.text)
+        raise RuntimeError(response.text)
     details = json.loads(response.content)
     return details
 
+
+
+async def run_exa_evidence_research(question: str | dict) -> tuple[str, list[str]]:
+    """
+    Claude-decomposed, Exa deep-search evidence gathering (exa_gathering.py).
+
+    Falls back to the legacy news-query path when the bundle comes back empty
+    (e.g. Exa rate limits) so research never degrades to nothing.
+    Returns (research_text, source_urls)
+    """
+    question_details = question if isinstance(question, dict) else {"title": str(question)}
+    async with _evidence_semaphore:
+        bundle = await gather_evidence(MetaculusQuestion.from_details(question_details))
+    if not bundle.evidence:
+        print("Evidence gathering returned no results; using legacy Exa research")
+        research = await run_exa_research(question_details)
+        urls = re.findall(r'URL: (https?://[^\n\s]+)', research)
+        return research, list(set(urls))
+    research = bundle.to_prompt()
+    source_urls = list(dict.fromkeys(item.url for item in bundle.evidence if item.url))
+    return research, source_urls
 
 
 async def run_research(question: str | dict) -> tuple[str, list[str]]:
@@ -215,24 +242,20 @@ async def run_research(question: str | dict) -> tuple[str, list[str]]:
     """
     research = ""
     source_urls = []
-    
+
     question_text = question.get("title", "") if isinstance(question, dict) else question
 
     # Check for AskNews credentials
     if ASKNEWS_CLIENT_ID and ASKNEWS_SECRET:
         research = call_asknews(question_text)
         # Extract URLs from AskNews research (they're in markdown format)
-        import re
         urls = re.findall(r'\[(.*?)\]\((https?://[^\)]+)\)', research)
         source_urls = [url[1] for url in urls]
     # Check for Exa API key
     elif EXA_API_KEY:
-        # Use the smart searcher with OpenAI-generated queries
-        research = await run_exa_research(question)
-        # Extract URLs from Exa research
-        import re
-        urls = re.findall(r'URL: (https?://[^\n\s]+)', research)
-        source_urls = list(set(urls))  # Remove duplicates
+        # LLM-decomposed multi-angle deep search (falls back internally to
+        # the legacy news-query path when it comes back empty)
+        research, source_urls = await run_exa_evidence_research(question)
     # Check for Perplexity API key
     elif PERPLEXITY_API_KEY:
         research = call_perplexity(question_text)
@@ -263,7 +286,7 @@ def forecast_is_already_made(post_details: dict) -> bool:
             "forecast_values"
         ]
         return forecast_values is not None
-    except Exception:
+    except (KeyError, TypeError):
         return False
 
 
@@ -291,18 +314,14 @@ async def forecast_individual_question(
         forecast_is_already_made(post_details)
         and skip_previously_forecasted_questions == True
     ):
-        summary_of_forecast += f"Skipped: Forecast already made\n"
+        summary_of_forecast += "Skipped: Forecast already made\n"
         return summary_of_forecast
 
     if question_type == "binary":
         forecast, comment = await get_binary_gpt_prediction(
             question_details, num_runs_per_question, run_research
         )
-    elif question_type == "numeric":
-        forecast, comment = await get_numeric_gpt_prediction(
-            question_details, num_runs_per_question, run_research
-        )
-    elif question_type == "discrete":
+    elif question_type == "numeric" or question_type == "discrete":
         forecast, comment = await get_numeric_gpt_prediction(
             question_details, num_runs_per_question, run_research
         )
