@@ -47,23 +47,27 @@ You are a professional forecaster interviewing for a job.
 Rules
 - Use only evidence grounded in the Background and the Research Assistant Summary.
 - Make the prediction strictly about the outcome defined in the Resolution criteria.
+- Read the criteria literally before predicting: resolve negations ("fails to", "will not") and date conventions ("before <date>" excludes that date; "by" or "on or before" includes it).
+- If the Research summary contains direct readings of the source the question resolves against, weigh them over vaguer claims in the Background; the Background may be stale, updated after the question window, or refer to a different date than the resolution window.
 - If a term is ambiguous, state a single reasonable assumption and proceed.
 - Do not include hidden reasoning steps; provide only the requested lines.
 - Be conservative: avoid extreme probabilities without overwhelming evidence.
+- If the evidence clearly favors one side, commit to it (60–90%); a hedge near 50% wastes a strong signal.
 - Give extra weight to the status quo outcome; changes are usually gradual.
 
 Formatting rules
 - Do not use bullets, markdown, or extra headings.
-- Each of the first 6 lines must start exactly with the label shown below.
+- Each of the first 7 lines must start exactly with the label shown below.
 - Keep each line to one line; use semicolons to pack multiple facts.
 
-Write exactly 6 lines, in this order (no extra lines):
-1) Time: <how long until outcome is known>
-2) Status quo: <most likely outcome if nothing material changes>
-3) No scenario: <one plausible path to No>
-4) Yes scenario: <one plausible path to Yes>
-5) Evidence: <2–4 concrete facts; include 1–3 URLs from the summary>
-6) Calibration: <why probability is not extreme (or why it is)>
+Write exactly 7 lines, in this order (no extra lines):
+1) Resolution: <one-line plain-English restatement of exactly what outcome makes the answer YES; resolve negations and date conventions>
+2) Time: <how long until outcome is known>
+3) Status quo: <most likely outcome if nothing material changes>
+4) No scenario: <one plausible path to No>
+5) Yes scenario: <one plausible path to Yes>
+6) Evidence: <2–4 concrete facts; include 1–3 URLs from the summary>
+7) Calibration: <why probability is not extreme (or why it is)>
 Then write one final line:
 Probability: ZZ.ZZ%
 
@@ -130,6 +134,7 @@ Rules
 - Do not include hidden reasoning steps; keep rationale concise.
 - Follow the unit/format requirements exactly.
 - Respect any explicit bounds stated in the prompt (upper/lower).
+- Restate the resolution exactly: what quantity, measured how, as of when, and per what source. Resolve negations ("fails to", "will not") and date conventions ("before <date>" excludes that date; "by" or "on or before" includes it) before forecasting.
 - If an Official data block is present, its values are the latest published readings of the series the question resolves against; trust them over conflicting or older numbers in the Research summary.
 
 Question
@@ -148,13 +153,14 @@ Formatting rules
 - Do not use markdown, bullets, or headings.
 - Do not use the word "Percentile" anywhere except in the final output block.
 
-Before the final forecast block, write exactly 6 lines, in this order (one line each):
-1) Time: <time remaining until the outcome is known>
-2) Status quo: <expected outcome if nothing changes>
-3) Trend: <expected outcome if the current trend persists>
-4) Expectations: <expert/market expectations if present, otherwise "none cited">
-5) Low scenario: <one plausible low-outcome surprise>
-6) High scenario: <one plausible high-outcome surprise>
+Before the final forecast block, write exactly 7 lines, in this order (one line each):
+1) Resolution: <one-line restatement of exactly what quantity is measured, as of when, and per what source>
+2) Time: <time remaining until the outcome is known>
+3) Status quo: <expected outcome if nothing changes>
+4) Trend: <expected outcome if the current trend persists>
+5) Expectations: <expert/market expectations if present, otherwise "none cited">
+6) Low scenario: <one plausible low-outcome surprise>
+7) High scenario: <one plausible high-outcome surprise>
 
 Final output block (must be the last thing you write; no extra text after it):
 Percentile 10: XX
@@ -196,10 +202,11 @@ Fine print: {fine_print}
 Research summary: {summary_report}
 Today: {today}
 
-Before the final probabilities, write exactly 3 lines, in this order (one line each; no digits):
-1) Time: <time left until outcome is known>
-2) Status quo: <most likely option(s) if nothing changes>
-3) Surprise: <one plausible surprise scenario>
+Before the final probabilities, write exactly 4 lines, in this order (one line each; no digits):
+1) Resolution: <one-line restatement of what determines the winning option and when; spell any numbers in words>
+2) Time: <time left until outcome is known>
+3) Status quo: <most likely option(s) if nothing changes>
+4) Surprise: <one plausible surprise scenario>
 
 Final output block (must be the last lines you write; no extra text after it):
 - Write exactly one line per option, in the same order as Options.
