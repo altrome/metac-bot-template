@@ -1,12 +1,25 @@
 import asyncio
+import os
+
 from openai import AsyncOpenAI
+
+from claude_calls import call_claude_reasoning_text
+from config import ANTHROPIC_API_KEY
 
 CONCURRENT_REQUESTS_LIMIT = 5
 llm_rate_limiter = asyncio.Semaphore(CONCURRENT_REQUESTS_LIMIT)
 
+# The ensemble alternates reasoning runs between GPT and Claude when a Claude
+# key is available. A custom ANTHROPIC_BASE_URL (e.g. a local Ollama gateway)
+# disables the Claude side: such gateways serve no Claude models, so every
+# other run would fail before falling back to GPT.
+CLAUDE_ENSEMBLE_ENABLED = bool(ANTHROPIC_API_KEY) and not os.getenv(
+    "ANTHROPIC_BASE_URL"
+)
+
 
 def _model_supports_reasoning_config(model: str) -> bool:
-    return model.startswith("gpt-5") or model.startswith("o")
+    return model.startswith(("gpt-5", "o"))
 
 
 def _simple_reasoning_effort_for_model(model: str) -> str:
@@ -102,7 +115,7 @@ async def call_gpt5_reasoning(
     model: str = "gpt-5.4",
     reasoning_effort: str = "medium",
     verbosity: str = "medium",
-    max_output_tokens: int = None,
+    max_output_tokens: int | None = None,
 ) -> dict:
     """
     Makes a completion request to OpenAI's GPT-5 reasoning model using the Responses API.
@@ -165,7 +178,34 @@ async def call_gpt5_reasoning(
         }
 
 
-async def create_rationale_summary(rationales: list[str], question_title: str, question_type: str, final_prediction: str, source_urls: list[str] = None) -> str:
+async def call_forecast_reasoner(content: str, run_index: int = 0) -> tuple[str, str]:
+    """
+    One ensemble forecast run: even run indices use GPT, odd indices use
+    Claude when the ensemble is enabled. A failed Claude run falls back to
+    GPT so the ensemble can never break a forecast.
+
+    Returns (rationale_text, vendor_name).
+    """
+    if CLAUDE_ENSEMBLE_ENABLED and run_index % 2 == 1:
+        try:
+            return await call_claude_reasoning_text(content), "Claude"
+        except Exception as exc:  # noqa: BLE001 -- the ensemble must not break the run
+            print(f"Claude run failed ({exc}); using GPT for this run instead")
+    rationale = await call_gpt5_reasoning_text(
+        content, reasoning_effort="medium", verbosity="medium"
+    )
+    return rationale, "GPT"
+
+
+def rationale_text_from_comment(comment: str) -> str:
+    """Strip the per-vendor answer marker from a run comment."""
+    for marker in ("GPT's Answer: ", "Claude's Answer: "):
+        if marker in comment:
+            return comment.split(marker, 1)[1]
+    return comment
+
+
+async def create_rationale_summary(rationales: list[str], question_title: str, question_type: str, final_prediction: str, source_urls: list[str] | None = None) -> str:
     """
     Create a consolidated summary of multiple rationales for a forecasting question.
     
@@ -208,12 +248,12 @@ async def create_rationale_summary(rationales: list[str], question_title: str, q
         
         # Add source URLs section if available
         if source_urls:
-            sources_section = f"\n\n## Sources Used\nThe following sources were used in this analysis:\n"
+            sources_section = "\n\n## Sources Used\nThe following sources were used in this analysis:\n"
             for i, url in enumerate(source_urls, 1):
                 sources_section += f"{i}. {url}\n"
             summary += sources_section
         
         return summary.strip()
-    except Exception as e:
-        print(f"Error creating rationale summary: {str(e)}")
+    except Exception as e:  # noqa: BLE001 -- a failed summary must not break the forecast
+        print(f"Error creating rationale summary: {e!s}")
         return "Failed to generate consolidated summary."

@@ -1,7 +1,11 @@
 import datetime
 import re
 
-from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
+from llm_calls import (
+    call_forecast_reasoner,
+    create_rationale_summary,
+    rationale_text_from_comment,
+)
 from prompts_gpt5 import BINARY_META_PROMPT_TEMPLATE, BINARY_PROMPT_TEMPLATE
 
 # Non-breaking / narrow spaces that sometimes appear before the '%' sign
@@ -135,21 +139,19 @@ async def get_binary_gpt_prediction(
         summary_report=summary_report,
     )
 
-    async def get_rationale_and_probability(content: str) -> tuple[float, str]:
+    async def get_rationale_and_probability(content: str, run_index: int) -> tuple[float, str]:
         last_rationale = None
         last_status = None
 
         # Small retry loop to handle occasional format drift.
         for _ in range(3):
-            rationale = await call_gpt5_reasoning_text(
-                content, reasoning_effort="medium", verbosity="medium"
-            )
+            rationale, vendor = await call_forecast_reasoner(content, run_index)
             last_rationale = rationale
             probability, status = extract_probability_percent(rationale)
             last_status = status
             if probability is not None:
                 comment = (
-                    f"Extracted Probability: {probability}%\n\nGPT's Answer: "
+                    f"Extracted Probability: {probability}%\n\n{vendor}'s Answer: "
                     f"{rationale}\n\n\n"
                 )
                 return probability, comment
@@ -164,7 +166,7 @@ async def get_binary_gpt_prediction(
     import numpy as np
 
     probability_and_comment_pairs = await asyncio.gather(
-        *[get_rationale_and_probability(content) for _ in range(num_runs)]
+        *[get_rationale_and_probability(content, i) for i in range(num_runs)]
     )
     comments = [pair[1] for pair in probability_and_comment_pairs]
     final_comment_sections = [
@@ -176,7 +178,7 @@ async def get_binary_gpt_prediction(
     # Create consolidated summary if multiple runs
     consolidated_summary = ""
     if num_runs > 1:
-        rationales = [pair[1].split("GPT's Answer: ", 1)[1] if "GPT's Answer: " in pair[1] else pair[1] for pair in probability_and_comment_pairs]
+        rationales = [rationale_text_from_comment(pair[1]) for pair in probability_and_comment_pairs]
         consolidated_summary = await create_rationale_summary(
             rationales=rationales,
             question_title=title,
