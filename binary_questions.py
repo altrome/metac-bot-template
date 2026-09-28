@@ -1,7 +1,8 @@
-import re
 import datetime
-from prompts_gpt5 import BINARY_PROMPT_TEMPLATE, BINARY_META_PROMPT_TEMPLATE
+import re
+
 from llm_calls import call_gpt5_reasoning_text, create_rationale_summary
+from prompts_gpt5 import BINARY_META_PROMPT_TEMPLATE, BINARY_PROMPT_TEMPLATE
 
 # Non-breaking / narrow spaces that sometimes appear before the '%' sign
 NBSPS = ("\u00A0", "\u202F", "\u2009", "\u2007")
@@ -13,7 +14,7 @@ NBSPS = ("\u00A0", "\u202F", "\u2009", "\u2007")
 PROB_LINE = re.compile(r"(?mi)^\s*(?:\d+\s*[\)\.]\s*)?Probability\s*:.*$")
 
 # Regex to extract a numeric value on that line; accepts optional '%' and decimals
-PROB_VALUE = re.compile(r"Probability\s*:\s*([0-9]+(?:[.,][0-9]+)?)\s*%?", re.I)
+PROB_VALUE = re.compile(r"Probability\s*:\s*([0-9]+(?:[.,][0-9]+)?)\s*%?", re.IGNORECASE)
 
 
 def is_meta_question(title: str) -> bool:
@@ -53,9 +54,13 @@ def extract_probability_from_response_as_percentage_not_decimal(
         raise ValueError(f"Could not extract prediction from response: {forecast_text}")
 
 
-def extract_probability_percent(text: str, clamp_min=1.0, clamp_max=99.0, decimals=2):
+def extract_probability_percent(text: str, clamp_min=2.0, clamp_max=98.0, decimals=2):
     """
-    Extract a probability percentage from the 'Probability:' line and return a value in [1, 99].
+    Extract a probability percentage from the 'Probability:' line and return a value in [2, 98].
+
+    The 2-98 band replaces the old 1-99: a 99% that misses costs far more spot
+    score than a 99% that hits earns (Spring had two such misses), and the median
+    across runs inherits the same protection.
     Robust to:
       - Optional '%' symbol (e.g., "93", "93%", "93.0 %", "93,0 %")
       - Unicode spacing before '%'
@@ -101,7 +106,7 @@ async def get_binary_gpt_prediction(
     question_details: dict, num_runs: int, run_research_func
 ) -> tuple[float, str]:
 
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     title = question_details["title"]
     resolution_criteria = question_details["resolution_criteria"]
     background = question_details["description"]
@@ -114,12 +119,12 @@ async def get_binary_gpt_prediction(
     if is_meta:
         # Use specialized template for meta-questions about community predictions
         template = BINARY_META_PROMPT_TEMPLATE
-        print(f"🎯 DETECTED META-QUESTION: Using BINARY_META_PROMPT_TEMPLATE")
+        print("🎯 DETECTED META-QUESTION: Using BINARY_META_PROMPT_TEMPLATE")
         print(f"   Title: {title}")
     else:
         # Use standard template for regular binary questions
         template = BINARY_PROMPT_TEMPLATE
-        print(f"📊 Standard binary question: Using BINARY_PROMPT_TEMPLATE")
+        print("📊 Standard binary question: Using BINARY_PROMPT_TEMPLATE")
 
     content = template.format(
         title=title,
@@ -155,6 +160,7 @@ async def get_binary_gpt_prediction(
         )
 
     import asyncio
+
     import numpy as np
 
     probability_and_comment_pairs = await asyncio.gather(
