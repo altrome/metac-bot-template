@@ -5,14 +5,21 @@ exactly 0.1% mass outside each open bound (the API validity floor was used
 as a target), so every out-of-range resolution cost ~200 points. These tests
 pin the fixed behavior: real tail mass on open bounds, exact endpoints on
 closed bounds, monotone and API-valid CDFs.
+
+A second regression (2026-10-06, question 46123): the API scales its per-step
+limits by inbound outcome count, and the hardcoded 0.2 cap made a closed
+upper bound unreachable on short discrete CDFs (4 outcomes x 0.2 = 0.8),
+which the API rejected with "at upper bound must be 1.00 due to upper bound
+being closed" -- while silently over-tailing open-bound discrete questions.
 """
 
 import contextlib
 import io
 
 import numpy as np
+import pytest
 
-from numeric_cdf_constrains import enforce_cdf_constraints
+from numeric_cdf_constrains import enforce_cdf_constraints, validate_cdf_for_submission
 from numeric_questions import (
     MIN_OPEN_BOUND_TAIL_MASS,
     extract_tail_probabilities,
@@ -60,16 +67,19 @@ def _build(
 
 def _assert_valid(cdf, open_lower, open_upper):
     cdf = np.asarray(cdf, dtype=float)
-    assert np.all(np.diff(cdf) >= -1e-9), "CDF must be non-decreasing"
-    assert np.all(np.diff(cdf) <= 0.2 + 1e-9), "no CDF step may exceed 0.2"
+    inbound = len(cdf) - 1
+    min_step = 0.01 / inbound
+    max_step = 0.2 * 200 / inbound
+    assert np.all(np.diff(cdf) >= min_step - 1e-9), "every step must meet the server minimum"
+    assert np.all(np.diff(cdf) <= max_step + 1e-9), "step caps scale with outcome count"
     if open_lower:
         assert cdf[0] >= 0.001, "open lower bound needs cdf[0] >= 0.001"
     else:
-        assert abs(cdf[0]) < 1e-9, "closed lower bound needs cdf[0] == 0"
+        assert cdf[0] == 0.0, "closed lower bound needs cdf[0] == 0.0 exactly"
     if open_upper:
         assert cdf[-1] <= 0.999, "open upper bound needs cdf[-1] <= 0.999"
     else:
-        assert abs(cdf[-1] - 1.0) < 1e-9, "closed upper bound needs cdf[-1] == 1"
+        assert cdf[-1] == 1.0, "closed upper bound needs cdf[-1] == 1.0 exactly"
 
 
 def test_open_upper_keeps_elicited_tail_mass():
@@ -127,6 +137,65 @@ def test_discrete_cdf_size():
     _assert_valid(cdf, open_lower=True, open_upper=True)
 
 
+def test_discrete_few_outcomes_closed_bounds_exact_endpoints():
+    # Regression (question 46123, 2026-10-06): discrete with 4 outcomes and
+    # closed bounds. The old hardcoded max_step=0.2 capped the CDF at 4 x 0.2
+    # = 0.8 and the API rejected it with "at upper bound must be 1.00 due to
+    # upper bound being closed". Step limits must scale with outcome count.
+    cdf = _build(MID_PERCENTILES, open_lower=False, open_upper=False, cdf_size=5)
+    _assert_valid(cdf, open_lower=False, open_upper=False)
+    assert cdf[-1] == 1.0
+    validate_cdf_for_submission(
+        cdf, open_lower=False, open_upper=False, inbound_outcome_count=4
+    )
+
+
+def test_discrete_two_outcomes_closed_bounds_exact_endpoints():
+    # Even shorter CDF (3 points): the old 0.2 cap could only ever reach 0.4.
+    cdf = _build(MID_PERCENTILES, open_lower=False, open_upper=False, cdf_size=3)
+    _assert_valid(cdf, open_lower=False, open_upper=False)
+    validate_cdf_for_submission(
+        cdf, open_lower=False, open_upper=False, inbound_outcome_count=2
+    )
+
+
+def test_discrete_open_bounds_keep_elicited_tails():
+    # The old 0.2 cap also silently over-tailed open-bound discrete questions:
+    # elicited 5%/5% tails came out 5%/15% because the 0.90 interior mass was
+    # infeasible under 4 x 0.2 = 0.8 and the projection clipped it.
+    cdf = _build(
+        MID_PERCENTILES, open_lower=True, open_upper=True, cdf_size=5, below=5, above=5
+    )
+    assert abs(cdf[0] - 0.05) < 1e-3
+    assert abs(cdf[-1] - 0.95) < 1e-3
+    _assert_valid(cdf, open_lower=True, open_upper=True)
+    validate_cdf_for_submission(
+        cdf, open_lower=True, open_upper=True, inbound_outcome_count=4
+    )
+
+
+def test_numeric_closed_bounds_endpoints_bit_exact():
+    # The API compares cdf[0]/cdf[-1] with == on closed bounds; the pipeline
+    # used to land within ~1e-12 of 1.0 (0.9999999999992272).
+    cdf = _build(MID_PERCENTILES, open_lower=False, open_upper=False)
+    assert cdf[0] == 0.0
+    assert cdf[-1] == 1.0
+    validate_cdf_for_submission(cdf, open_lower=False, open_upper=False)
+
+
+def test_validate_cdf_for_submission_rejects_old_bug_shape():
+    # The exact CDF the old code produced for question 46123 -- the validator
+    # must fail locally with the server's own complaint before anything is
+    # posted.
+    with pytest.raises(ValueError, match="upper bound must be 1.00"):
+        validate_cdf_for_submission(
+            [0.0, 0.2, 0.4, 0.6, 0.8],
+            open_lower=False,
+            open_upper=False,
+            inbound_outcome_count=4,
+        )
+
+
 def test_validity_matrix():
     cases = [
         (False, False, None, None),
@@ -181,7 +250,7 @@ def test_median_aggregation_stays_valid():
         _build({10: 310_000, 50: 365_000, 90: 410_000}, True, True, below=25, above=None),
     ]
     median = np.median(np.array(cdfs), axis=0)
-    assert np.all(np.diff(median) >= -1e-9)
+    assert np.all(np.diff(median) >= 5e-05 - 1e-9)
     assert median[0] >= MIN_OPEN_BOUND_TAIL_MASS - 1e-3
     assert median[-1] <= 1 - MIN_OPEN_BOUND_TAIL_MASS + 1e-3
 

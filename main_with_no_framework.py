@@ -16,6 +16,7 @@ from config import (
 from exa_gathering import MetaculusQuestion, gather_evidence
 from exa_search import run_exa_research
 from multiple_choice_questions import get_multiple_choice_gpt_prediction
+from numeric_cdf_constrains import validate_cdf_for_submission
 from numeric_questions import get_numeric_gpt_prediction
 from perplexity_search import call_perplexity
 
@@ -344,6 +345,15 @@ async def forecast_individual_question(
     summary_of_forecast += f"Comment:\n```\n{comment[:400]}...\n```\n\n"
 
     if submit_prediction == True:
+        if question_type in ("numeric", "discrete"):
+            # Fail locally with a clear message rather than as an API 400 after
+            # the research and forecast runs have already been spent.
+            validate_cdf_for_submission(
+                forecast,
+                question_details["open_lower_bound"],
+                question_details["open_upper_bound"],
+                question_details["scaling"].get("inbound_outcome_count"),
+            )
         forecast_payload = create_forecast_payload(forecast, question_type)
         post_question_prediction(question_id, forecast_payload)
         post_question_comment(post_id, comment)
