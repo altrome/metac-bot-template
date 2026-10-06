@@ -2,7 +2,26 @@
 # Module to build/validate continuous CDFs compatible with Metaculus.
 
 from __future__ import annotations
+
 import numpy as np
+
+# Metaculus numeric questions discretize the CDF at 201 points; discrete
+# questions at inbound_outcome_count + 1 points. The API scales its per-step
+# limits by the inbound outcome count (questions/serializers/common.py in
+# Metaculus/metaculus), so they must be derived from the CDF length, not
+# hardcoded: a 4-outcome discrete question allows steps up to 10, and the
+# numeric 0.2 cap would make a closed upper bound unreachable.
+DEFAULT_INBOUND_OUTCOME_COUNT = 200
+
+
+def server_step_bounds(cdf_size: int) -> tuple[float, float]:
+    """
+    Per-step (min, max) increment the Metaculus API accepts for a CDF of
+    cdf_size points. Numeric questions (201 points) get 5e-05..0.2; a
+    4-outcome discrete question gets 0.0025..10.
+    """
+    inbound = max(cdf_size - 1, 1)
+    return 0.01 / inbound, 0.2 * DEFAULT_INBOUND_OUTCOME_COUNT / inbound
 
 
 def _project_bounded_simplex(
@@ -54,8 +73,8 @@ def _anti_flatten_postpass(
     cdf_in: np.ndarray,
     lower: float,
     upper: float,
-    min_step: float = 5e-05,
-    max_step: float = 0.2,
+    min_step: float,
+    max_step: float,
     cv_thresh: float = 0.10,
     blend: float = 0.20,
 ) -> np.ndarray:
@@ -67,6 +86,8 @@ def _anti_flatten_postpass(
 
     cv_thresh: flatness threshold; if CV(diff(cdf)) < cv_thresh, apply correction.
     blend:     kernel mixing weight (0..1). 0.20–0.30 works well in practice.
+
+    min_step/max_step must be the server_step_bounds for this CDF length.
 
     Returns a CDF with the same length; step constraints remain valid.
     """
@@ -113,19 +134,21 @@ def enforce_cdf_constraints(
     cdf_raw: np.ndarray,
     open_lower: bool,
     open_upper: bool,
-    min_step: float = 5e-05,
-    max_step: float = 0.2,
+    min_step: float | None = None,
+    max_step: float | None = None,
 ) -> np.ndarray:
     """
-    Normalize a CDF (typically 201 points in Metaculus) to satisfy:
+    Normalize a CDF to satisfy everything the Metaculus API validates:
 
       • Non-decreasing monotonicity.
-      • PER-STEP increment within [min_step, max_step]
-        (e.g., [5e-05, 0.59]); the limit is per step, not divided by the number of points.
+      • PER-STEP increment within the server's scaled limits
+        (5e-05..0.2 for the 201-point numeric CDF; wider for short
+        discrete CDFs — see server_step_bounds).
       • Open/closed bounds:
           - open lower  → cdf[0] ≥ 0.001
           - open upper  → cdf[-1] ≤ 0.999
-          - closed      → 0.0 and 1.0 respectively.
+          - closed      → exactly 0.0 and 1.0 respectively (the API compares
+            with ==, so endpoints are snapped bit-exact at the end).
       • PRESERVE the endpoint masses of the input: 0.001/0.999 are API validity
         floors, not targets. A CDF that already leaves real mass outside an
         open bound (e.g. 5%) keeps it; only degenerate endpoints are moved.
@@ -141,6 +164,11 @@ def enforce_cdf_constraints(
     n = len(cdf_raw)
     if n < 2:
         return cdf_raw
+
+    if min_step is None or max_step is None:
+        derived_min, derived_max = server_step_bounds(n)
+        min_step = derived_min if min_step is None else min_step
+        max_step = derived_max if max_step is None else max_step
 
     # 1) Basic cleanup: clamp to [0,1] and enforce monotonicity
     c = np.clip(cdf_raw, 0.0, 1.0)
@@ -186,13 +214,87 @@ def enforce_cdf_constraints(
         cdf_fix,
         lower=lower_target,
         upper=upper_target,
-        min_step=L,              # use the feasible L we computed
+        min_step=L,              # the feasible min we computed
         max_step=max_step,
         cv_thresh=0.10,          # lower to 0.08 if flatness persists
         blend=0.20               # increase to 0.25–0.30 for stronger bell shape
     )
 
+    # 8) Bit-exact endpoints on closed bounds: the API compares cdf[0]/cdf[-1]
+    # with == (0.0/1.00). The projections above land within ~1e-12 of the
+    # target; snap so the endpoint survives the JSON round-trip exactly.
+    if not open_lower:
+        cdf_fix[0] = 0.0
+    if not open_upper:
+        cdf_fix[-1] = 1.0
+
     return cdf_fix
+
+
+def validate_cdf_for_submission(
+    cdf: list[float] | np.ndarray,
+    open_lower: bool,
+    open_upper: bool,
+    inbound_outcome_count: int | None = None,
+) -> None:
+    """
+    Client-side mirror of the Metaculus API's CDF validation
+    (continuous_validation in questions/serializers/common.py), so an
+    invalid CDF fails here with a clear message instead of as a 400 after
+    the research and forecast runs have already been spent. Raises
+    ValueError with the same complaints the server would raise; silent
+    return means the server will accept it.
+    """
+    if inbound_outcome_count is None or inbound_outcome_count <= 0:
+        inbound_outcome_count = DEFAULT_INBOUND_OUTCOME_COUNT
+
+    cdf = np.round(np.asarray(cdf, dtype=float), 10).tolist()
+    if len(cdf) < 2:
+        raise ValueError(
+            f"CDF Invalid:\ncontinuous_cdf must have "
+            f"{inbound_outcome_count + 1} values (got {len(cdf)}).\n"
+        )
+    steps = np.round(np.diff(cdf), 9)
+
+    errors = ""
+    if len(cdf) != inbound_outcome_count + 1:
+        errors += (
+            f"continuous_cdf must have {inbound_outcome_count + 1} values "
+            f"(got {len(cdf)}).\n"
+        )
+    min_diff = np.round(0.01 / inbound_outcome_count, 9)
+    if not np.all(steps >= min_diff):
+        errors += (
+            "continuous_cdf must be increasing by at least "
+            f"{min_diff} at every step.\n"
+        )
+    max_diff = 0.2 * DEFAULT_INBOUND_OUTCOME_COUNT / inbound_outcome_count
+    if not np.all(steps <= max_diff):
+        errors += (
+            "continuous_cdf must be increasing by no more than "
+            f"{max_diff} at every step.\n"
+        )
+    if open_lower:
+        if not cdf[0] >= 0.001:
+            errors += (
+                "continuous_cdf at lower bound must be at least 0.001 "
+                "due to lower bound being open.\n"
+            )
+    elif cdf[0] != 0.00:
+        errors += "continuous_cdf[0] must be 0.0 (closed lower bound).\n"
+    if open_upper:
+        if not cdf[-1] <= 0.999:
+            errors += (
+                "continuous_cdf at upper bound must be at most 0.999 "
+                "due to upper bound being open.\n"
+            )
+    elif cdf[-1] != 1.00:
+        errors += (
+            "continuous_cdf at upper bound must be 1.00 "
+            "due to upper bound being closed.\n"
+        )
+    if errors:
+        raise ValueError("CDF Invalid:\n" + errors)
 
 
 # === Console previews for CDF/pdf (ASCII/Unicode) ===
@@ -233,12 +335,12 @@ def ascii_plot_cdf(cdf, width: int = 80, height: int = 16, y_ticks=(0.0, 0.5, 1.
     grid = [[" "] * W for _ in range(H)]
     # Draw CDF points
     for j, val in enumerate(ys):
-        r = int(round((1.0 - val) * (H - 1)))  # 0=top
+        r = round((1.0 - val) * (H - 1))  # 0=top
         r = max(0, min(H - 1, r))
         grid[r][j] = "█"
     # Grid lines for y_ticks
     for t in y_ticks:
-        r = int(round((1.0 - t) * (H - 1)))
+        r = round((1.0 - t) * (H - 1))
         if 0 <= r < H:
             for j in range(W):
                 if grid[r][j] == " ":
